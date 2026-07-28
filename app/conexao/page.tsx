@@ -6,14 +6,26 @@ interface Status {
   configured: boolean;
   connected: boolean;
   databaseConfigured: boolean;
+  databaseOk?: boolean;
+  databaseError?: string | null;
 }
 
 export default function ConexaoPage() {
   const [status, setStatus] = useState<Status | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   async function load() {
-    const r = await fetch("/api/bling/status");
-    setStatus(await r.json());
+    try {
+      setLoadError(null);
+      const r = await fetch("/api/bling/status");
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      setStatus(await r.json());
+    } catch (e) {
+      setLoadError(
+        "Não foi possível carregar o status. " +
+          (e instanceof Error ? e.message : ""),
+      );
+    }
   }
   useEffect(() => {
     load();
@@ -34,7 +46,18 @@ export default function ConexaoPage() {
         </p>
       </header>
 
-      {!status && <p className="text-sm text-slate-400">Carregando…</p>}
+      {!status && !loadError && (
+        <p className="text-sm text-slate-400">Carregando…</p>
+      )}
+
+      {loadError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {loadError}{" "}
+          <button onClick={load} className="underline">
+            tentar de novo
+          </button>
+        </div>
+      )}
 
       {status && (
         <div className="space-y-4">
@@ -72,10 +95,20 @@ export default function ConexaoPage() {
 
           <Card
             label="Banco de dados"
-            ok={status.databaseConfigured}
-            okText="Postgres configurado"
-            offText="Em memória (dev)"
+            ok={status.databaseConfigured ? status.databaseOk !== false : false}
+            okText="Postgres conectado"
+            offText={
+              status.databaseConfigured ? "Erro de conexão" : "Em memória (dev)"
+            }
           >
+            {status.databaseConfigured && status.databaseOk === false && (
+              <p className="text-sm text-red-700">
+                Falha ao conectar no banco:{" "}
+                <code className="rounded bg-red-50 px-1">
+                  {status.databaseError}
+                </code>
+              </p>
+            )}
             {!status.databaseConfigured && (
               <p className="text-sm text-slate-500">
                 Sem{" "}
