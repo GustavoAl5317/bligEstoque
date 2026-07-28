@@ -4,9 +4,13 @@
 //   - prazo de produção de cada fornecedor;
 //   - consumo mensal (CM) por produto (importado ou calculado).
 //
-// Se DATABASE_URL estiver definido, usa Postgres (produção). Caso contrário,
-// usa memória (desenvolvimento local sem banco). A interface é a mesma, então
-// o resto do sistema não muda.
+// Se houver DATABASE_URL/POSTGRES_URL, usa Postgres (produção). Caso contrário,
+// usa memória (dev sem banco). A interface é a mesma para o resto do sistema.
+//
+// IMPORTANTE (serverless): NÃO reaproveitamos uma conexão persistente. Em
+// ambientes serverless (Vercel) o pooler do Postgres derruba conexões ociosas, e
+// reusar uma conexão morta faz a requisição "pendurar". Por isso cada operação
+// abre uma conexão nova e curta pelo pooler (que é feito exatamente para isso).
 
 import postgres from "postgres";
 import type { Curve } from "@/lib/bling/types";
@@ -71,103 +75,133 @@ class MemoryStore implements SettingsStore {
 
 type Sql = ReturnType<typeof postgres>;
 
+function connect(url: string): Sql {
+  return postgres(url, {
+    max: 1,
+    prepare: false, // pooler em modo transação (pgbouncer) não suporta prepared
+    ssl: "require",
+    connect_timeout: 8,
+  });
+}
+
+// Executado uma vez por processo (cacheado), cria as tabelas se não existirem.
+let schemaReady: Promise<void> | null = null;
+
+async function ensureSchema(url: string): Promise<void> {
+  if (!schemaReady) {
+    schemaReady = (async () => {
+      const sql = connect(url);
+      try {
+        await sql`create table if not exists bling_oauth (
+          id text primary key default 'default',
+          access_token text not null,
+          refresh_token text not null,
+          expires_at bigint not null,
+          updated_at timestamptz not null default now()
+        )`;
+        await sql`create table if not exists product_settings (
+          sku text primary key,
+          curve text not null,
+          updated_at timestamptz not null default now()
+        )`;
+        await sql`create table if not exists supplier_settings (
+          id text primary key,
+          lead_time_days integer not null,
+          updated_at timestamptz not null default now()
+        )`;
+        await sql`create table if not exists monthly_consumption (
+          sku text primary key,
+          cm numeric not null default 0,
+          updated_at timestamptz not null default now()
+        )`;
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    })().catch((e) => {
+      schemaReady = null; // permite nova tentativa numa próxima chamada
+      throw e;
+    });
+  }
+  return schemaReady;
+}
+
 class PostgresStore implements SettingsStore {
-  private ready: Promise<void> | null = null;
+  constructor(private url: string) {}
 
-  constructor(private sql: Sql) {}
-
-  private ensureSchema() {
-    if (!this.ready) {
-      this.ready = (async () => {
-        await this.sql`
-          create table if not exists bling_oauth (
-            id text primary key default 'default',
-            access_token text not null,
-            refresh_token text not null,
-            expires_at bigint not null,
-            updated_at timestamptz not null default now()
-          )`;
-        await this.sql`
-          create table if not exists product_settings (
-            sku text primary key,
-            curve text not null,
-            updated_at timestamptz not null default now()
-          )`;
-        await this.sql`
-          create table if not exists supplier_settings (
-            id text primary key,
-            lead_time_days integer not null,
-            updated_at timestamptz not null default now()
-          )`;
-        await this.sql`
-          create table if not exists monthly_consumption (
-            sku text primary key,
-            cm numeric not null default 0,
-            updated_at timestamptz not null default now()
-          )`;
-      })();
+  /** Abre conexão curta, garante o schema, roda a operação e fecha. */
+  private async run<T>(fn: (sql: Sql) => Promise<T>): Promise<T> {
+    await ensureSchema(this.url);
+    const sql = connect(this.url);
+    try {
+      return await fn(sql);
+    } finally {
+      await sql.end({ timeout: 5 });
     }
-    return this.ready;
   }
 
-  async getProductCurves() {
+  private async safeRead<T>(fn: (sql: Sql) => Promise<T>, fallback: T): Promise<T> {
     try {
-      await this.ensureSchema();
-      const rows = await this.sql<{ sku: string; curve: Curve }[]>`
+      return await this.run(fn);
+    } catch (e) {
+      console.error("DB leitura falhou:", e);
+      return fallback;
+    }
+  }
+
+  getProductCurves() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ sku: string; curve: Curve }[]>`
         select sku, curve from product_settings`;
       return Object.fromEntries(rows.map((r) => [r.sku, r.curve]));
-    } catch (e) {
-      console.error("DB getProductCurves falhou:", e);
-      return {};
-    }
+    }, {} as Record<string, Curve>);
   }
+
   async setProductCurve(sku: string, curve: Curve) {
-    await this.ensureSchema();
-    await this.sql`
-      insert into product_settings (sku, curve, updated_at)
-      values (${sku}, ${curve}, now())
-      on conflict (sku) do update set curve = excluded.curve, updated_at = now()`;
+    await this.run(
+      (sql) => sql`
+        insert into product_settings (sku, curve, updated_at)
+        values (${sku}, ${curve}, now())
+        on conflict (sku) do update set curve = excluded.curve, updated_at = now()`,
+    );
   }
-  async getSupplierLeadTimes() {
-    try {
-      await this.ensureSchema();
-      const rows = await this.sql<{ id: string; lead_time_days: number }[]>`
+
+  getSupplierLeadTimes() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ id: string; lead_time_days: number }[]>`
         select id, lead_time_days from supplier_settings`;
       return Object.fromEntries(rows.map((r) => [r.id, r.lead_time_days]));
-    } catch (e) {
-      console.error("DB getSupplierLeadTimes falhou:", e);
-      return {};
-    }
+    }, {} as Record<string, number>);
   }
+
   async setSupplierLeadTime(id: string, days: number) {
-    await this.ensureSchema();
-    await this.sql`
-      insert into supplier_settings (id, lead_time_days, updated_at)
-      values (${id}, ${days}, now())
-      on conflict (id) do update set lead_time_days = excluded.lead_time_days, updated_at = now()`;
+    await this.run(
+      (sql) => sql`
+        insert into supplier_settings (id, lead_time_days, updated_at)
+        values (${id}, ${days}, now())
+        on conflict (id) do update set lead_time_days = excluded.lead_time_days, updated_at = now()`,
+    );
   }
-  async getMonthlyConsumption() {
-    try {
-      await this.ensureSchema();
-      const rows = await this.sql<{ sku: string; cm: number }[]>`
+
+  getMonthlyConsumption() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ sku: string; cm: number }[]>`
         select sku, cm from monthly_consumption`;
       return Object.fromEntries(rows.map((r) => [r.sku, Number(r.cm)]));
-    } catch (e) {
-      console.error("DB getMonthlyConsumption falhou:", e);
-      return {};
-    }
+    }, {} as Record<string, number>);
   }
+
   async setMonthlyConsumption(sku: string, cm: number) {
-    await this.ensureSchema();
-    await this.sql`
-      insert into monthly_consumption (sku, cm, updated_at)
-      values (${sku}, ${cm}, now())
-      on conflict (sku) do update set cm = excluded.cm, updated_at = now()`;
+    await this.run(
+      (sql) => sql`
+        insert into monthly_consumption (sku, cm, updated_at)
+        values (${sku}, ${cm}, now())
+        on conflict (sku) do update set cm = excluded.cm, updated_at = now()`,
+    );
   }
-  async getBlingToken() {
-    try {
-      await this.ensureSchema();
-      const rows = await this.sql<
+
+  getBlingToken() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<
         { access_token: string; refresh_token: string; expires_at: string }[]
       >`select access_token, refresh_token, expires_at from bling_oauth where id = 'default'`;
       if (rows.length === 0) return null;
@@ -177,39 +211,31 @@ class PostgresStore implements SettingsStore {
         refreshToken: r.refresh_token,
         expiresAt: Number(r.expires_at),
       };
-    } catch (e) {
-      console.error("DB getBlingToken falhou:", e);
-      return null;
-    }
+    }, null as BlingToken | null);
   }
+
   async saveBlingToken(token: BlingToken) {
-    await this.ensureSchema();
-    await this.sql`
-      insert into bling_oauth (id, access_token, refresh_token, expires_at, updated_at)
-      values ('default', ${token.accessToken}, ${token.refreshToken}, ${token.expiresAt}, now())
-      on conflict (id) do update set
-        access_token = excluded.access_token,
-        refresh_token = excluded.refresh_token,
-        expires_at = excluded.expires_at,
-        updated_at = now()`;
+    await this.run(
+      (sql) => sql`
+        insert into bling_oauth (id, access_token, refresh_token, expires_at, updated_at)
+        values ('default', ${token.accessToken}, ${token.refreshToken}, ${token.expiresAt}, now())
+        on conflict (id) do update set
+          access_token = excluded.access_token,
+          refresh_token = excluded.refresh_token,
+          expires_at = excluded.expires_at,
+          updated_at = now()`,
+    );
   }
+
   async clearBlingToken() {
-    await this.ensureSchema();
-    await this.sql`delete from bling_oauth where id = 'default'`;
+    await this.run((sql) => sql`delete from bling_oauth where id = 'default'`);
   }
 }
 
 // ---------- Fábrica (singleton de processo) ----------
-//
-// Guardado em globalThis para ser compartilhado entre todas as rotas e
-// sobreviver ao hot-reload em desenvolvimento. (Em produção serverless, cada
-// instância tem seu próprio processo — por isso a memória é só fallback de dev
-// e a persistência de verdade exige DATABASE_URL/Postgres.)
 
 const globalForStore = globalThis as unknown as { blingStore?: SettingsStore };
 
-// Aceita os nomes de variável mais comuns (Vercel Postgres/Neon usam DATABASE_URL
-// ou POSTGRES_URL).
 function databaseUrl(): string | undefined {
   return process.env.DATABASE_URL || process.env.POSTGRES_URL;
 }
@@ -218,17 +244,7 @@ export function getStore(): SettingsStore {
   if (globalForStore.blingStore) return globalForStore.blingStore;
   const url = databaseUrl();
   const store: SettingsStore = url
-    ? // max:1/prepare:false amigáveis a serverless + pooler (pgbouncer);
-      // connect_timeout evita que uma falha de rede "pendure" a requisição.
-      new PostgresStore(
-        postgres(url, {
-          max: 1,
-          prepare: false,
-          ssl: "require",
-          connect_timeout: 10,
-          idle_timeout: 20,
-        }),
-      )
+    ? new PostgresStore(url)
     : new MemoryStore();
   globalForStore.blingStore = store;
   return store;
@@ -243,12 +259,7 @@ export function isDatabaseConfigured(): boolean {
 export async function checkDatabase(): Promise<{ ok: boolean; error?: string }> {
   const url = databaseUrl();
   if (!url) return { ok: false, error: "sem DATABASE_URL/POSTGRES_URL" };
-  const sql = postgres(url, {
-    max: 1,
-    prepare: false,
-    ssl: "require",
-    connect_timeout: 8,
-  });
+  const sql = connect(url);
   try {
     await sql`select 1`;
     return { ok: true };
