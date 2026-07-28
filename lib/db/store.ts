@@ -188,11 +188,18 @@ class PostgresStore implements SettingsStore {
 
 const globalForStore = globalThis as unknown as { blingStore?: SettingsStore };
 
+// Aceita os nomes de variável mais comuns (Vercel Postgres/Neon usam DATABASE_URL
+// ou POSTGRES_URL).
+function databaseUrl(): string | undefined {
+  return process.env.DATABASE_URL || process.env.POSTGRES_URL;
+}
+
 export function getStore(): SettingsStore {
   if (globalForStore.blingStore) return globalForStore.blingStore;
-  const url = process.env.DATABASE_URL;
+  const url = databaseUrl();
   const store: SettingsStore = url
-    ? new PostgresStore(postgres(url, { max: 5 }))
+    ? // max:1 e prepare:false são amigáveis a serverless + pooler (pgbouncer).
+      new PostgresStore(postgres(url, { max: 1, prepare: false }))
     : new MemoryStore();
   globalForStore.blingStore = store;
   return store;
@@ -200,5 +207,5 @@ export function getStore(): SettingsStore {
 
 /** Indica se o banco Postgres está configurado (senão, memória). */
 export function isDatabaseConfigured(): boolean {
-  return Boolean(process.env.DATABASE_URL);
+  return Boolean(databaseUrl());
 }
