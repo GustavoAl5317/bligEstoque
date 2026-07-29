@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import type { Supplier } from "@/lib/bling/types";
 import { MultiSelect, type Option } from "@/components/MultiSelect";
 
@@ -48,17 +49,20 @@ export function FilterForm({
   onSubmit,
   loading,
 }: Props) {
-  const supplierOptions: Option[] = suppliers.map((s) => ({
-    id: s.id,
-    label: s.name,
-    hint: `${s.leadTimeDays}d`,
-  }));
-  const curveOptions: Option[] = curves.map((c) => ({ id: c, label: `Curva ${c}` }));
-  const productOptions: Option[] = products.map((p) => ({
-    id: p.sku,
-    label: p.name,
-    hint: p.sku,
-  }));
+  // Memorizados: sem isso, as listas (4.685 produtos) seriam recriadas a cada
+  // tecla e o dropdown "engasgaria" ao digitar.
+  const supplierOptions: Option[] = useMemo(
+    () => suppliers.map((s) => ({ id: s.id, label: s.name, hint: `${s.leadTimeDays}d` })),
+    [suppliers],
+  );
+  const curveOptions: Option[] = useMemo(
+    () => curves.map((c) => ({ id: c, label: `Curva ${c}` })),
+    [curves],
+  );
+  const productOptions: Option[] = useMemo(
+    () => products.map((p) => ({ id: p.sku, label: p.name, hint: p.sku })),
+    [products],
+  );
 
   return (
     <form
