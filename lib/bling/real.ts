@@ -18,8 +18,6 @@ import { getStore, type CachedProduct } from "@/lib/db/store";
 const BASE_URL = "https://www.bling.com.br/Api/v3";
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 100; // trava de segurança (até 10.000 produtos)
-// Bling v3 limita a ~3 requisições/segundo. Intervalo entre páginas fica folgado.
-const PAGE_DELAY_MS = 400;
 
 type Json = Record<string, unknown>;
 
@@ -59,6 +57,34 @@ export class BlingApiDataSource implements BlingDataSource {
       throw new Error(`Bling API ${path} respondeu ${res.status}`);
     }
     return (await res.json()) as T;
+  }
+
+  /**
+   * Percorre todas as páginas de um endpoint { data: [...] } em lotes paralelos,
+   * respeitando o limite de ~3 requisições/segundo do Bling (BATCH por janela).
+   */
+  private async paginate(makePath: (page: number) => string): Promise<Json[]> {
+    const BATCH = 3;
+    const WINDOW_MS = 1100;
+    const out: Json[] = [];
+    let page = 1;
+    let done = false;
+    while (!done && page <= MAX_PAGES) {
+      const pages: number[] = [];
+      for (let i = 0; i < BATCH && page <= MAX_PAGES; i++, page++) pages.push(page);
+      const started = Date.now();
+      const results = await Promise.all(
+        pages.map((p) => this.get<{ data?: Json[] }>(makePath(p))),
+      );
+      for (const r of results) {
+        const d = r.data ?? [];
+        out.push(...d);
+        if (d.length < PAGE_LIMIT) done = true;
+      }
+      const elapsed = Date.now() - started;
+      if (!done && elapsed < WINDOW_MS) await sleep(WINDOW_MS - elapsed);
+    }
+    return out;
   }
 
   // ---- Leitura para a interface (do cache no banco) ----
@@ -107,22 +133,16 @@ export class BlingApiDataSource implements BlingDataSource {
 
   /** Busca todos os produtos do Bling e regrava o cache. Retorna a quantidade. */
   async syncProducts(): Promise<number> {
-    const produtos: Json[] = [];
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const res = await this.get<{ data?: Json[] }>(
-        `/produtos?pagina=${page}&limite=${PAGE_LIMIT}`,
-      );
-      const data = res.data ?? [];
-      produtos.push(...data);
-      if (data.length < PAGE_LIMIT) break;
-      await sleep(PAGE_DELAY_MS); // respeita o limite de requisições do Bling
-    }
+    const produtos = await this.paginate(
+      (page) => `/produtos?pagina=${page}&limite=${PAGE_LIMIT}`,
+    );
 
     const cache: CachedProduct[] = produtos
       .filter((p) => str(p.tipo, "P") === "P" && str(p.codigo) !== "")
       .map((p) => {
         const estoque = (p.estoque as Json) ?? {};
         return {
+          blingId: str(p.id),
           sku: str(p.codigo),
           name: str(p.nome, str(p.codigo)),
           cost: num(p.precoCusto),
@@ -141,6 +161,58 @@ export class BlingApiDataSource implements BlingDataSource {
 
     await getStore().replaceProductCache(unique);
     return unique.length;
+  }
+
+  /**
+   * Busca as ligações produto→fornecedor (/produtos/fornecedores), resolve o
+   * nome de cada fornecedor e grava no banco. Retorna quantos produtos ficaram
+   * com fornecedor.
+   */
+  async syncSuppliers(): Promise<number> {
+    // 1) Todas as ligações produto→fornecedor (prioriza o fornecedor padrão).
+    const rows = await this.paginate(
+      (page) => `/produtos/fornecedores?pagina=${page}&limite=${PAGE_LIMIT}`,
+    );
+    const linkByProduct = new Map<string, { supplierId: string; padrao: boolean }>();
+    for (const row of rows) {
+      const produtoId = str((row.produto as Json)?.id);
+      const fornecedorId = str((row.fornecedor as Json)?.id);
+      const padrao = Boolean(row.padrao);
+      if (!produtoId || !fornecedorId) continue;
+      const cur = linkByProduct.get(produtoId);
+      if (!cur || (padrao && !cur.padrao)) {
+        linkByProduct.set(produtoId, { supplierId: fornecedorId, padrao });
+      }
+    }
+
+    // 2) Nome de cada fornecedor único, em lotes paralelos (respeita 3/s).
+    const supplierIds = [...new Set([...linkByProduct.values()].map((l) => l.supplierId))];
+    const nameById = new Map<string, string>();
+    for (let i = 0; i < supplierIds.length; i += 3) {
+      const batch = supplierIds.slice(i, i + 3);
+      const started = Date.now();
+      await Promise.all(
+        batch.map(async (id) => {
+          try {
+            const c = await this.get<{ data?: Json }>(`/contatos/${id}`);
+            nameById.set(id, str(c.data?.nome, `Fornecedor ${id}`));
+          } catch {
+            nameById.set(id, `Fornecedor ${id}`);
+          }
+        }),
+      );
+      const elapsed = Date.now() - started;
+      if (i + 3 < supplierIds.length && elapsed < 1100) await sleep(1100 - elapsed);
+    }
+
+    // 3) Grava as ligações com nome.
+    const links = [...linkByProduct.entries()].map(([blingId, l]) => ({
+      blingId,
+      supplierId: l.supplierId,
+      supplierName: nameById.get(l.supplierId) ?? `Fornecedor ${l.supplierId}`,
+    }));
+    await getStore().replaceProductSuppliers(links);
+    return links.length;
   }
 }
 

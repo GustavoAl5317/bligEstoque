@@ -41,10 +41,17 @@ export default function ProdutosPage() {
     setSyncing(true);
     setSyncMsg(null);
     try {
-      const r = await fetch("/api/bling/sync", { method: "POST" });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "Falha na sincronização.");
-      setSyncMsg(`${d.count} produtos sincronizados do Bling.`);
+      setSyncMsg("Sincronizando produtos…");
+      const r1 = await fetch("/api/bling/sync", { method: "POST" });
+      const d1 = await r1.json();
+      if (!r1.ok) throw new Error(d1.error || "Falha ao sincronizar produtos.");
+
+      setSyncMsg(`${d1.count} produtos. Sincronizando fornecedores…`);
+      const r2 = await fetch("/api/bling/sync-suppliers", { method: "POST" });
+      const d2 = await r2.json();
+      if (!r2.ok) throw new Error(d2.error || "Falha ao sincronizar fornecedores.");
+
+      setSyncMsg(`${d1.count} produtos e ${d2.count} com fornecedor sincronizados.`);
       loadProducts();
     } catch (e) {
       setSyncMsg(e instanceof Error ? e.message : "Falha na sincronização.");

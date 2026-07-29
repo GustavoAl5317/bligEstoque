@@ -24,11 +24,20 @@ export interface BlingToken {
 
 /** Produto sincronizado do Bling para o banco (lido rápido pela interface). */
 export interface CachedProduct {
+  /** ID interno do produto no Bling (para cruzar com fornecedores). */
+  blingId: string;
   sku: string;
   name: string;
   cost: number;
   price: number;
   stock: number;
+  supplierId: string;
+  supplierName: string;
+}
+
+/** Ligação produto→fornecedor, sincronizada à parte. */
+export interface ProductSupplierLink {
+  blingId: string;
   supplierId: string;
   supplierName: string;
 }
@@ -45,6 +54,7 @@ export interface SettingsStore {
   clearBlingToken(): Promise<void>;
   replaceProductCache(products: CachedProduct[]): Promise<void>;
   getCachedProducts(): Promise<CachedProduct[]>;
+  replaceProductSuppliers(links: ProductSupplierLink[]): Promise<void>;
 }
 
 // ---------- Implementação em memória (dev sem banco) ----------
@@ -55,6 +65,7 @@ class MemoryStore implements SettingsStore {
   private consumption = new Map<string, number>();
   private token: BlingToken | null = null;
   private productCache: CachedProduct[] = [];
+  private supplierLinks = new Map<string, ProductSupplierLink>();
 
   async getProductCurves() {
     return Object.fromEntries(this.curves);
@@ -86,8 +97,16 @@ class MemoryStore implements SettingsStore {
   async replaceProductCache(products: CachedProduct[]) {
     this.productCache = products;
   }
+  async replaceProductSuppliers(links: ProductSupplierLink[]) {
+    this.supplierLinks = new Map(links.map((l) => [l.blingId, l]));
+  }
   async getCachedProducts() {
-    return this.productCache;
+    return this.productCache.map((p) => {
+      const link = this.supplierLinks.get(p.blingId);
+      return link
+        ? { ...p, supplierId: link.supplierId, supplierName: link.supplierName }
+        : p;
+    });
   }
 }
 
@@ -136,6 +155,7 @@ async function ensureSchema(url: string): Promise<void> {
         )`;
         await sql`create table if not exists product_cache (
           sku text primary key,
+          bling_id text not null default '',
           name text not null default '',
           cost numeric not null default 0,
           price numeric not null default 0,
@@ -143,6 +163,12 @@ async function ensureSchema(url: string): Promise<void> {
           supplier_id text not null default '',
           supplier_name text not null default '',
           updated_at timestamptz not null default now()
+        )`;
+        await sql`alter table product_cache add column if not exists bling_id text not null default ''`;
+        await sql`create table if not exists product_supplier (
+          bling_id text primary key,
+          supplier_id text not null default '',
+          supplier_name text not null default ''
         )`;
       } finally {
         await sql.end({ timeout: 5 });
@@ -269,6 +295,7 @@ class PostgresStore implements SettingsStore {
       for (let i = 0; i < products.length; i += CHUNK) {
         const slice = products.slice(i, i + CHUNK).map((p) => ({
           sku: p.sku,
+          bling_id: p.blingId,
           name: p.name,
           cost: p.cost,
           price: p.price,
@@ -279,6 +306,7 @@ class PostgresStore implements SettingsStore {
         await sql`insert into product_cache ${sql(
           slice,
           "sku",
+          "bling_id",
           "name",
           "cost",
           "price",
@@ -290,8 +318,29 @@ class PostgresStore implements SettingsStore {
     });
   }
 
+  async replaceProductSuppliers(links: ProductSupplierLink[]) {
+    await this.run(async (sql) => {
+      await sql`truncate table product_supplier`;
+      const CHUNK = 500;
+      for (let i = 0; i < links.length; i += CHUNK) {
+        const slice = links.slice(i, i + CHUNK).map((l) => ({
+          bling_id: l.blingId,
+          supplier_id: l.supplierId,
+          supplier_name: l.supplierName,
+        }));
+        await sql`insert into product_supplier ${sql(
+          slice,
+          "bling_id",
+          "supplier_id",
+          "supplier_name",
+        )}`;
+      }
+    });
+  }
+
   getCachedProducts() {
     return this.safeRead(async (sql) => {
+      // Junta o produto com o fornecedor (quando já sincronizado).
       const rows = await sql<
         {
           sku: string;
@@ -299,18 +348,23 @@ class PostgresStore implements SettingsStore {
           cost: number;
           price: number;
           stock: number;
-          supplier_id: string;
-          supplier_name: string;
+          supplier_id: string | null;
+          supplier_name: string | null;
         }[]
-      >`select sku, name, cost, price, stock, supplier_id, supplier_name from product_cache`;
+      >`select pc.sku, pc.name, pc.cost, pc.price, pc.stock,
+               coalesce(ps.supplier_id, pc.supplier_id) as supplier_id,
+               coalesce(ps.supplier_name, pc.supplier_name) as supplier_name
+          from product_cache pc
+          left join product_supplier ps on ps.bling_id = pc.bling_id`;
       return rows.map((r) => ({
+        blingId: "",
         sku: r.sku,
         name: r.name,
         cost: Number(r.cost),
         price: Number(r.price),
         stock: Number(r.stock),
-        supplierId: r.supplier_id,
-        supplierName: r.supplier_name,
+        supplierId: r.supplier_id ?? "",
+        supplierName: r.supplier_name ?? "",
       }));
     }, [] as CachedProduct[]);
   }
