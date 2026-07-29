@@ -29,6 +29,7 @@ export default function ProdutosPage() {
   const [savedId, setSavedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [supplier, setSupplier] = useState("");
+  const [onlyConsumption, setOnlyConsumption] = useState(false);
   const [page, setPage] = useState(1);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
@@ -49,22 +50,29 @@ export default function ProdutosPage() {
     [rows],
   );
 
+  // Quantos produtos têm consumo registrado (de todos, não só os filtrados).
+  const withConsumption = useMemo(
+    () => rows.filter((r) => r.monthlyConsumption > 0).length,
+    [rows],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const s = supplier.trim().toLowerCase();
     return rows.filter(
       (r) =>
         (s === "" || r.supplierName.toLowerCase().includes(s)) &&
+        (!onlyConsumption || r.monthlyConsumption > 0) &&
         (q === "" ||
           r.name.toLowerCase().includes(q) ||
           r.sku.toLowerCase().includes(q)),
     );
-  }, [rows, supplier, query]);
+  }, [rows, supplier, query, onlyConsumption]);
 
   // Volta para a página 1 sempre que os filtros mudam.
   useEffect(() => {
     setPage(1);
-  }, [query, supplier]);
+  }, [query, supplier, onlyConsumption]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -175,7 +183,25 @@ export default function ProdutosPage() {
           onChange={(e) => setQuery(e.target.value)}
           className="min-w-[200px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand sm:max-w-xs"
         />
+        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            checked={onlyConsumption}
+            onChange={(e) => setOnlyConsumption(e.target.checked)}
+            className="accent-brand"
+          />
+          Só com consumo
+        </label>
       </div>
+
+      {/* Resumo do consumo — mostra que o cálculo funcionou */}
+      {rows.length > 0 && (
+        <p className="mb-3 text-sm text-slate-500">
+          <b className="text-slate-700">{formatInt(withConsumption)}</b> de{" "}
+          {formatInt(rows.length)} produtos têm consumo registrado nos últimos 6
+          meses. Os demais não tiveram venda no período (aparecem com “—”).
+        </p>
+      )}
 
       {/* Ação em lote */}
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-brand-light/60 bg-brand-tint/50 px-4 py-3">
