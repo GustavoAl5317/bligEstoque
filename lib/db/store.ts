@@ -50,6 +50,18 @@ export interface ProductSupplierLink {
   supplierName: string;
 }
 
+/** Linha pronta para a tela de Produtos e curvas (já com curva/consumo/fornecedor). */
+export interface ProductListing {
+  sku: string;
+  name: string;
+  supplierName: string;
+  curve: Curve;
+  monthlyConsumption: number;
+  stock: number;
+  cost: number;
+  price: number;
+}
+
 /** Estado do cálculo de consumo pelas vendas (processado em etapas). */
 export interface ConsumptionJob {
   periodStart: string;
@@ -74,6 +86,8 @@ export interface SettingsStore {
   clearBlingToken(): Promise<void>;
   replaceProductCache(products: CachedProduct[]): Promise<void>;
   getCachedProducts(): Promise<CachedProduct[]>;
+  /** Lista pronta para a tela de curvas (uma consulta só, com tudo junto). */
+  getProductsForListing(): Promise<ProductListing[]>;
   replaceProductSuppliers(links: ProductSupplierLink[]): Promise<void>;
 
   // Cálculo de consumo pelas vendas (processado em etapas).
@@ -163,6 +177,22 @@ class MemoryStore implements SettingsStore {
       return link
         ? { ...p, supplierId: link.supplierId, supplierName: link.supplierName }
         : p;
+    });
+  }
+
+  async getProductsForListing(): Promise<ProductListing[]> {
+    return this.productCache.map((p) => {
+      const link = this.supplierLinks.get(p.blingId);
+      return {
+        sku: p.sku,
+        name: p.name,
+        supplierName: link?.supplierName || p.supplierName || "—",
+        curve: this.curves.get(p.sku) ?? ("C" as Curve),
+        monthlyConsumption: this.consumption.get(p.sku) ?? 0,
+        stock: p.stock,
+        cost: p.cost,
+        price: p.price,
+      };
     });
   }
 }
@@ -531,6 +561,44 @@ class PostgresStore implements SettingsStore {
         supplierName: r.supplier_name ?? "",
       }));
     }, [] as CachedProduct[]);
+  }
+
+  getProductsForListing() {
+    // UMA consulta só: produto + fornecedor + curva + consumo mensal.
+    // Todos os joins são por chave primária (rápidos). Evita abrir várias
+    // conexões e ler a tabela de produtos duas vezes.
+    return this.safeRead(async (sql) => {
+      const rows = await sql<
+        {
+          sku: string;
+          name: string;
+          supplier_name: string | null;
+          curve: string | null;
+          cm: number | null;
+          stock: number;
+          cost: number;
+          price: number;
+        }[]
+      >`select pc.sku, pc.name, pc.stock, pc.cost, pc.price,
+               coalesce(nullif(ps.supplier_name, ''), nullif(pc.supplier_name, '')) as supplier_name,
+               s.curve as curve,
+               mc.cm as cm
+          from product_cache pc
+          left join product_supplier ps on ps.bling_id = pc.bling_id
+          left join product_settings s on s.sku = pc.sku
+          left join monthly_consumption mc on mc.sku = pc.sku
+         order by pc.name`;
+      return rows.map((r) => ({
+        sku: r.sku,
+        name: r.name,
+        supplierName: r.supplier_name ?? "—",
+        curve: (r.curve ?? "C") as Curve,
+        monthlyConsumption: r.cm != null ? Number(r.cm) : 0,
+        stock: Number(r.stock),
+        cost: Number(r.cost),
+        price: Number(r.price),
+      }));
+    }, [] as ProductListing[]);
   }
 }
 
