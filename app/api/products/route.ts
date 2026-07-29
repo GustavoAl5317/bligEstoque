@@ -26,17 +26,27 @@ export async function GET() {
 
 const VALID_CURVES: Curve[] = ["A", "B", "C"];
 
-// Salva a curva escolhida manualmente para um produto (chave = SKU).
+// Salva a curva de 1 produto (sku) ou de vários (skus) de uma vez.
 export async function PATCH(req: NextRequest) {
-  const { sku, curve } = (await req.json()) as {
+  const { sku, skus, curve } = (await req.json()) as {
     sku?: string;
+    skus?: string[];
     curve?: Curve;
   };
 
-  if (!sku || !curve || !VALID_CURVES.includes(curve)) {
-    return NextResponse.json({ error: "Dados inválidos." }, { status: 400 });
+  if (!curve || !VALID_CURVES.includes(curve)) {
+    return NextResponse.json({ error: "Curva inválida." }, { status: 400 });
   }
 
-  await getStore().setProductCurve(sku, curve);
-  return NextResponse.json({ ok: true });
+  if (Array.isArray(skus) && skus.length > 0) {
+    await getStore().setProductCurves(skus, curve);
+    return NextResponse.json({ ok: true, count: skus.length });
+  }
+
+  if (sku) {
+    await getStore().setProductCurve(sku, curve);
+    return NextResponse.json({ ok: true, count: 1 });
+  }
+
+  return NextResponse.json({ error: "Informe sku ou skus." }, { status: 400 });
 }

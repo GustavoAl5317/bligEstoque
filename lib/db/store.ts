@@ -45,6 +45,8 @@ export interface ProductSupplierLink {
 export interface SettingsStore {
   getProductCurves(): Promise<Record<string, Curve>>;
   setProductCurve(sku: string, curve: Curve): Promise<void>;
+  /** Define a mesma curva para vários produtos de uma vez. */
+  setProductCurves(skus: string[], curve: Curve): Promise<void>;
   getSupplierLeadTimes(): Promise<Record<string, number>>;
   setSupplierLeadTime(id: string, days: number): Promise<void>;
   getMonthlyConsumption(): Promise<Record<string, number>>;
@@ -73,6 +75,9 @@ class MemoryStore implements SettingsStore {
   async setProductCurve(sku: string, curve: Curve) {
     this.curves.set(sku, curve);
   }
+  async setProductCurves(skus: string[], curve: Curve) {
+    for (const sku of skus) this.curves.set(sku, curve);
+  }
   async getSupplierLeadTimes() {
     return Object.fromEntries(this.leadTimes);
   }
@@ -95,7 +100,10 @@ class MemoryStore implements SettingsStore {
     this.token = null;
   }
   async replaceProductCache(products: CachedProduct[]) {
-    this.productCache = products;
+    // Upsert por SKU: atualiza os existentes e adiciona os novos (não apaga).
+    const bySku = new Map(this.productCache.map((p) => [p.sku, p]));
+    for (const p of products) bySku.set(p.sku, p);
+    this.productCache = [...bySku.values()];
   }
   async replaceProductSuppliers(links: ProductSupplierLink[]) {
     this.supplierLinks = new Map(links.map((l) => [l.blingId, l]));
@@ -221,6 +229,18 @@ class PostgresStore implements SettingsStore {
     );
   }
 
+  async setProductCurves(skus: string[], curve: Curve) {
+    if (skus.length === 0) return;
+    await this.run(async (sql) => {
+      const CHUNK = 500;
+      for (let i = 0; i < skus.length; i += CHUNK) {
+        const slice = skus.slice(i, i + CHUNK).map((sku) => ({ sku, curve }));
+        await sql`insert into product_settings ${sql(slice, "sku", "curve")}
+          on conflict (sku) do update set curve = excluded.curve, updated_at = now()`;
+      }
+    });
+  }
+
   getSupplierLeadTimes() {
     return this.safeRead(async (sql) => {
       const rows = await sql<{ id: string; lead_time_days: number }[]>`
@@ -289,8 +309,8 @@ class PostgresStore implements SettingsStore {
 
   async replaceProductCache(products: CachedProduct[]) {
     await this.run(async (sql) => {
-      await sql`truncate table product_cache`;
-      // Insere em lotes para não estourar o tamanho da query.
+      // Upsert por SKU: atualiza estoque/preço dos existentes e adiciona novos,
+      // sem apagar nada. Não toca em curvas/consumo (tabelas separadas).
       const CHUNK = 500;
       for (let i = 0; i < products.length; i += CHUNK) {
         const slice = products.slice(i, i + CHUNK).map((p) => ({
@@ -313,7 +333,14 @@ class PostgresStore implements SettingsStore {
           "stock",
           "supplier_id",
           "supplier_name",
-        )}`;
+        )}
+        on conflict (sku) do update set
+          bling_id = excluded.bling_id,
+          name = excluded.name,
+          cost = excluded.cost,
+          price = excluded.price,
+          stock = excluded.stock,
+          updated_at = now()`;
       }
     });
   }
