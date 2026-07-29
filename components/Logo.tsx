@@ -1,12 +1,20 @@
 // Logo DANZI. Aproximação em SVG da marca (borboleta coral) + wordmark.
 // Para usar o arquivo oficial, troque o <svg> por <img src="/logo.png" />.
 
-export function Logo({ compact = false }: { compact?: boolean }) {
+export function Logo({
+  compact = false,
+  size = "sm",
+}: {
+  compact?: boolean;
+  size?: "sm" | "lg";
+}) {
+  const lg = size === "lg";
+  const dim = lg ? 52 : 30;
   return (
-    <div className="flex items-center gap-2.5">
+    <div className={`flex items-center ${lg ? "gap-3.5" : "gap-2.5"}`}>
       <svg
-        width="30"
-        height="30"
+        width={dim}
+        height={dim}
         viewBox="0 0 40 40"
         fill="none"
         aria-hidden="true"
@@ -20,7 +28,11 @@ export function Logo({ compact = false }: { compact?: boolean }) {
         />
       </svg>
       {!compact && (
-        <span className="text-lg font-semibold tracking-[0.35em] text-brand">
+        <span
+          className={`font-semibold text-brand ${
+            lg ? "text-3xl tracking-[0.4em]" : "text-lg tracking-[0.35em]"
+          }`}
+        >
           DANZI
         </span>
       )}
