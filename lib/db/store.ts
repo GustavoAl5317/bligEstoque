@@ -15,6 +15,14 @@
 import postgres from "postgres";
 import type { Curve } from "@/lib/bling/types";
 
+/** Formata um valor de data (Date do driver ou string) como YYYY-MM-DD. */
+function isoDate(v: unknown): string {
+  if (v instanceof Date) {
+    return `${v.getUTCFullYear()}-${String(v.getUTCMonth() + 1).padStart(2, "0")}-${String(v.getUTCDate()).padStart(2, "0")}`;
+  }
+  return String(v).slice(0, 10);
+}
+
 export interface BlingToken {
   accessToken: string;
   refreshToken: string;
@@ -436,8 +444,8 @@ class PostgresStore implements SettingsStore {
       if (rows.length === 0) return null;
       const r = rows[0];
       return {
-        periodStart: String(r.period_start).slice(0, 10),
-        periodEnd: String(r.period_end).slice(0, 10),
+        periodStart: isoDate(r.period_start),
+        periodEnd: isoDate(r.period_end),
         months: r.months,
         nextPage: r.next_page,
         processed: r.processed,
