@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBRL, formatInt } from "@/lib/format";
 
 interface ProductRow {
@@ -34,6 +34,9 @@ export default function ProdutosPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   function loadProducts() {
     fetch("/api/products")
@@ -100,6 +103,27 @@ export default function ProdutosPage() {
     }
   }
 
+  async function importCurves(file: File) {
+    setImporting(true);
+    setImportMsg("Lendo a planilha…");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/import/curves", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Falha ao importar.");
+      setImportMsg(
+        `${formatInt(d.total)} curvas importadas (A: ${d.byCurve.A}, B: ${d.byCurve.B}, C: ${d.byCurve.C}).`,
+      );
+      loadProducts();
+    } catch (e) {
+      setImportMsg(e instanceof Error ? e.message : "Falha ao importar.");
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   async function changeCurve(row: ProductRow, curve: ProductRow["curve"]) {
     setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, curve } : r)));
     await fetch("/api/products", {
@@ -143,14 +167,35 @@ export default function ProdutosPage() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <button
-            onClick={sync}
-            disabled={syncing}
-            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
-          >
-            {syncing ? "Sincronizando…" : "Sincronizar com o Bling"}
-          </button>
+          <div className="flex gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importCurves(f);
+              }}
+            />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={importing}
+              className="rounded-lg border border-brand px-4 py-2 text-sm font-medium text-brand transition hover:bg-brand-tint disabled:opacity-50"
+              title="Enviar a planilha do Excel para atualizar as curvas de uma vez"
+            >
+              {importing ? "Importando…" : "Importar curvas da planilha"}
+            </button>
+            <button
+              onClick={sync}
+              disabled={syncing}
+              className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
+            >
+              {syncing ? "Sincronizando…" : "Sincronizar com o Bling"}
+            </button>
+          </div>
           {syncMsg && <span className="text-xs text-slate-500">{syncMsg}</span>}
+          {importMsg && <span className="text-xs text-slate-500">{importMsg}</span>}
         </div>
       </header>
 
