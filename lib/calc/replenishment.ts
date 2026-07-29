@@ -13,8 +13,10 @@ export interface CalcFilters {
   supplierIds: string[];
   /** Curvas a incluir. Vazio = todas. */
   curves: string[];
-  /** Cobertura desejada de estoque, em dias (quanto o pedido deve durar). */
+  /** Cobertura desejada de estoque, em dias (fallback quando não há por curva). */
   coverageDays: number;
+  /** Cobertura por curva (ex.: A=60, B=30, C=30). Tem prioridade sobre coverageDays. */
+  coverageByCurve?: Record<string, number>;
   /** Fator de segurança (nº de desvios padrão). 0 = sem estoque de segurança. */
   safetyFactor: number;
   /** Override opcional do prazo de produção (dias). Vazio = usa o do fornecedor. */
@@ -77,8 +79,10 @@ function calcProduct(
   const dailyDemand = product.monthlyConsumption / DAYS_IN_MONTH;
   const dailyStdDev = product.monthlyConsumptionStdDev / Math.sqrt(DAYS_IN_MONTH);
 
+  const coverageDays =
+    filters.coverageByCurve?.[product.curve] ?? filters.coverageDays;
   const stockAtArrival = Math.max(0, product.stock - dailyDemand * leadTimeDays);
-  const coverageDemand = dailyDemand * filters.coverageDays;
+  const coverageDemand = dailyDemand * coverageDays;
   const safetyStock =
     filters.safetyFactor * dailyStdDev * Math.sqrt(Math.max(leadTimeDays, 0));
 

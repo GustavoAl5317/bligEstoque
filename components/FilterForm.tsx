@@ -6,6 +6,8 @@ export interface FilterState {
   supplierIds: string[];
   curves: string[];
   coverageDays: number;
+  /** Cobertura (dias) por curva — ex.: A=60, B=30, C=30. */
+  coverageByCurve: Record<string, number>;
   safetyFactor: number;
   /** Vazio = usa o prazo do fornecedor. */
   leadTimeOverrideDays: number | "";
@@ -124,22 +126,35 @@ export function FilterForm({
           </p>
         </fieldset>
 
-        {/* Cobertura desejada */}
+        {/* Cobertura por curva */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-slate-700">
-            Cobertura desejada (dias)
+            Cobertura desejada (dias) — por curva
           </label>
-          <input
-            type="number"
-            min={1}
-            value={value.coverageDays}
-            onChange={(e) =>
-              onChange({ ...value, coverageDays: Number(e.target.value) })
-            }
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-900"
-          />
+          <div className="flex flex-wrap gap-3">
+            {(["A", "B", "C"] as const).map((c) => (
+              <label key={c} className="flex items-center gap-1.5">
+                <span className="text-sm font-semibold text-slate-500">{c}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={value.coverageByCurve[c] ?? ""}
+                  onChange={(e) =>
+                    onChange({
+                      ...value,
+                      coverageByCurve: {
+                        ...value.coverageByCurve,
+                        [c]: Number(e.target.value),
+                      },
+                    })
+                  }
+                  className="w-20 rounded-lg border border-slate-300 px-2 py-2 text-sm outline-none focus:border-brand"
+                />
+              </label>
+            ))}
+          </div>
           <p className="mt-1.5 text-xs text-slate-400">
-            Por quantos dias o pedido deve durar.
+            Quantos dias o pedido deve durar em cada curva (ex.: A=60, B=30, C=30).
           </p>
         </div>
 

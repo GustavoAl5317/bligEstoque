@@ -16,9 +16,10 @@ interface Metadata {
 const initialFilters: FilterState = {
   supplierIds: [],
   curves: [],
-  coverageDays: 60,
+  coverageDays: 30,
+  coverageByCurve: { A: 60, B: 30, C: 30 },
   safetyFactor: 0,
-  leadTimeOverrideDays: "",
+  leadTimeOverrideDays: 30,
 };
 
 export default function Home() {
@@ -46,6 +47,7 @@ export default function Home() {
           supplierIds: filters.supplierIds,
           curves: filters.curves,
           coverageDays: filters.coverageDays,
+          coverageByCurve: filters.coverageByCurve,
           safetyFactor: filters.safetyFactor,
           leadTimeOverrideDays:
             filters.leadTimeOverrideDays === ""
