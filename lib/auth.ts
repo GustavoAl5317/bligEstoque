@@ -20,8 +20,16 @@ function authSecret(): string {
   return process.env.AUTH_SECRET || "danzi-troque-este-segredo";
 }
 
+function norm(s: string | undefined): string {
+  return (s ?? "").trim();
+}
+
 export function checkCredentials(user: string, password: string): boolean {
-  return user === authUser() && password === authPassword();
+  // Tolerante a espaços extras (comuns ao colar no painel) e a maiúsculas no
+  // usuário (é um e-mail). A senha é comparada sem espaços nas pontas.
+  const userOk = norm(user).toLowerCase() === norm(authUser()).toLowerCase();
+  const passOk = norm(password) === norm(authPassword());
+  return userOk && passOk;
 }
 
 /** Assina um valor com HMAC-SHA256 e devolve em hex (edge-safe). */
