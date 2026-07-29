@@ -18,8 +18,14 @@ import { getStore, type CachedProduct } from "@/lib/db/store";
 const BASE_URL = "https://www.bling.com.br/Api/v3";
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 100; // trava de segurança (até 10.000 produtos)
+// Bling v3 limita a ~3 requisições/segundo. Intervalo entre páginas fica folgado.
+const PAGE_DELAY_MS = 400;
 
 type Json = Record<string, unknown>;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 function num(v: unknown, fallback = 0): number {
   const n = typeof v === "string" ? parseFloat(v) : (v as number);
@@ -35,7 +41,7 @@ export class BlingApiDataSource implements BlingDataSource {
 
   constructor(private readonly accessToken: string) {}
 
-  private async get<T = Json>(path: string): Promise<T> {
+  private async get<T = Json>(path: string, attempt = 0): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
@@ -43,6 +49,12 @@ export class BlingApiDataSource implements BlingDataSource {
       },
       cache: "no-store",
     });
+    // 429 = limite de requisições atingido: espera e tenta de novo.
+    if (res.status === 429 && attempt < 5) {
+      const retryAfter = Number(res.headers.get("retry-after"));
+      await sleep(retryAfter > 0 ? retryAfter * 1000 : 1000 * (attempt + 1));
+      return this.get<T>(path, attempt + 1);
+    }
     if (!res.ok) {
       throw new Error(`Bling API ${path} respondeu ${res.status}`);
     }
@@ -103,6 +115,7 @@ export class BlingApiDataSource implements BlingDataSource {
       const data = res.data ?? [];
       produtos.push(...data);
       if (data.length < PAGE_LIMIT) break;
+      await sleep(PAGE_DELAY_MS); // respeita o limite de requisições do Bling
     }
 
     const cache: CachedProduct[] = produtos
