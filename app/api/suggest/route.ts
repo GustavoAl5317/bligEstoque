@@ -17,6 +17,7 @@ export async function POST(req: NextRequest) {
   const filters: CalcFilters = {
     supplierIds: Array.isArray(body.supplierIds) ? body.supplierIds : [],
     curves: Array.isArray(body.curves) ? body.curves : [],
+    productSkus: Array.isArray(body.productSkus) ? body.productSkus : [],
     coverageDays: Number(body.coverageDays) || 30,
     coverageByCurve,
     safetyFactor: Number(body.safetyFactor) || 0,

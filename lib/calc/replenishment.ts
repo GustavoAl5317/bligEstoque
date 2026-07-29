@@ -13,6 +13,8 @@ export interface CalcFilters {
   supplierIds: string[];
   /** Curvas a incluir. Vazio = todas. */
   curves: string[];
+  /** SKUs específicos a incluir. Vazio = todos. */
+  productSkus?: string[];
   /** Cobertura desejada de estoque, em dias (fallback quando não há por curva). */
   coverageDays: number;
   /** Cobertura por curva (ex.: A=60, B=30, C=30). Tem prioridade sobre coverageDays. */
@@ -112,10 +114,12 @@ export function calcReplenishment(
   filters: CalcFilters,
 ): SuggestionResult {
   const supplierById = new Map(suppliers.map((s) => [s.id, s]));
+  const skuSet = new Set(filters.productSkus ?? []);
 
   const rows = products
     .filter((p) => filters.supplierIds.length === 0 || filters.supplierIds.includes(p.supplierId))
     .filter((p) => filters.curves.length === 0 || filters.curves.includes(p.curve))
+    .filter((p) => skuSet.size === 0 || skuSet.has(p.sku))
     .map((p) => {
       const supplier = supplierById.get(p.supplierId);
       const leadTimeDays =

@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import type { Supplier } from "@/lib/bling/types";
 import type { SuggestionResult } from "@/lib/calc/replenishment";
-import { FilterForm, type FilterState } from "@/components/FilterForm";
+import {
+  FilterForm,
+  type FilterState,
+  type ProductOption,
+} from "@/components/FilterForm";
 import { ResultsTable } from "@/components/ResultsTable";
 
 interface Metadata {
@@ -16,6 +20,7 @@ interface Metadata {
 const initialFilters: FilterState = {
   supplierIds: [],
   curves: [],
+  productSkus: [],
   coverageDays: 30,
   coverageByCurve: { A: 60, B: 30, C: 30 },
   safetyFactor: 0,
@@ -24,6 +29,7 @@ const initialFilters: FilterState = {
 
 export default function Home() {
   const [meta, setMeta] = useState<Metadata | null>(null);
+  const [products, setProducts] = useState<ProductOption[]>([]);
   const [filters, setFilters] = useState<FilterState>(initialFilters);
   const [result, setResult] = useState<SuggestionResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,6 +40,17 @@ export default function Home() {
       .then((r) => r.json())
       .then(setMeta)
       .catch(() => setError("Não foi possível carregar os dados iniciais."));
+    fetch("/api/products")
+      .then((r) => r.json())
+      .then((d) =>
+        setProducts(
+          (d.products ?? []).map((p: { sku: string; name: string }) => ({
+            sku: p.sku,
+            name: p.name,
+          })),
+        ),
+      )
+      .catch(() => {});
   }, []);
 
   async function generate() {
@@ -46,6 +63,7 @@ export default function Home() {
         body: JSON.stringify({
           supplierIds: filters.supplierIds,
           curves: filters.curves,
+          productSkus: filters.productSkus,
           coverageDays: filters.coverageDays,
           coverageByCurve: filters.coverageByCurve,
           safetyFactor: filters.safetyFactor,
@@ -121,6 +139,7 @@ export default function Home() {
       <FilterForm
         suppliers={meta?.suppliers ?? []}
         curves={meta?.curves ?? []}
+        products={products}
         value={filters}
         onChange={setFilters}
         onSubmit={generate}

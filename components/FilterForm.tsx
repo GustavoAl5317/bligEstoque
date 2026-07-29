@@ -1,10 +1,13 @@
 "use client";
 
 import type { Supplier } from "@/lib/bling/types";
+import { MultiSelect, type Option } from "@/components/MultiSelect";
 
 export interface FilterState {
   supplierIds: string[];
   curves: string[];
+  /** SKUs de produtos específicos. Vazio = todos. */
+  productSkus: string[];
   coverageDays: number;
   /** Cobertura (dias) por curva — ex.: A=60, B=30, C=30. */
   coverageByCurve: Record<string, number>;
@@ -13,9 +16,16 @@ export interface FilterState {
   leadTimeOverrideDays: number | "";
 }
 
+/** Produto para o seletor de produtos. */
+export interface ProductOption {
+  sku: string;
+  name: string;
+}
+
 interface Props {
   suppliers: Supplier[];
   curves: string[];
+  products: ProductOption[];
   value: FilterState;
   onChange: (next: FilterState) => void;
   onSubmit: () => void;
@@ -32,22 +42,23 @@ const SAFETY_OPTIONS = [
 export function FilterForm({
   suppliers,
   curves,
+  products,
   value,
   onChange,
   onSubmit,
   loading,
 }: Props) {
-  function toggleSupplier(id: string) {
-    const set = new Set(value.supplierIds);
-    set.has(id) ? set.delete(id) : set.add(id);
-    onChange({ ...value, supplierIds: [...set] });
-  }
-
-  function toggleCurve(c: string) {
-    const set = new Set(value.curves);
-    set.has(c) ? set.delete(c) : set.add(c);
-    onChange({ ...value, curves: [...set] });
-  }
+  const supplierOptions: Option[] = suppliers.map((s) => ({
+    id: s.id,
+    label: s.name,
+    hint: `${s.leadTimeDays}d`,
+  }));
+  const curveOptions: Option[] = curves.map((c) => ({ id: c, label: `Curva ${c}` }));
+  const productOptions: Option[] = products.map((p) => ({
+    id: p.sku,
+    label: p.name,
+    hint: p.sku,
+  }));
 
   return (
     <form
@@ -63,68 +74,56 @@ export function FilterForm({
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         {/* Fornecedores */}
-        <fieldset>
-          <legend className="mb-2 text-sm font-medium text-slate-700">
+        <div>
+          <label className="mb-2 block text-sm font-medium text-slate-700">
             Fornecedor
-          </legend>
-          <div className="flex flex-wrap gap-2">
-            {suppliers.length === 0 && (
-              <span className="text-sm text-slate-400">Carregando…</span>
-            )}
-            {suppliers.map((s) => {
-              const active = value.supplierIds.includes(s.id);
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => toggleSupplier(s.id)}
-                  className={`rounded-full border px-3 py-1 text-sm transition ${
-                    active
-                      ? "border-brand bg-brand text-white"
-                      : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
-                  }`}
-                >
-                  {s.name}
-                  <span className="ml-1 text-xs opacity-70">
-                    {s.leadTimeDays}d
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          </label>
+          <MultiSelect
+            options={supplierOptions}
+            selected={value.supplierIds}
+            onChange={(ids) => onChange({ ...value, supplierIds: ids })}
+            allLabel="Todos os fornecedores"
+            placeholder="Buscar fornecedor…"
+          />
           <p className="mt-1.5 text-xs text-slate-400">
             Nenhum selecionado = todos.
           </p>
-        </fieldset>
+        </div>
 
         {/* Curva ABC */}
-        <fieldset>
-          <legend className="mb-2 text-sm font-medium text-slate-700">
+        <div>
+          <label className="mb-2 block text-sm font-medium text-slate-700">
             Classificação (Curva ABC)
-          </legend>
-          <div className="flex flex-wrap gap-2">
-            {curves.map((c) => {
-              const active = value.curves.includes(c);
-              return (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => toggleCurve(c)}
-                  className={`h-9 w-9 rounded-lg border text-sm font-semibold transition ${
-                    active
-                      ? "border-brand bg-brand text-white"
-                      : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
-                  }`}
-                >
-                  {c}
-                </button>
-              );
-            })}
-          </div>
+          </label>
+          <MultiSelect
+            options={curveOptions}
+            selected={value.curves}
+            onChange={(cs) => onChange({ ...value, curves: cs })}
+            allLabel="Todas as curvas"
+            searchable={false}
+          />
           <p className="mt-1.5 text-xs text-slate-400">
             Nenhum selecionado = todas.
           </p>
-        </fieldset>
+        </div>
+
+        {/* Produtos específicos */}
+        <div className="md:col-span-2">
+          <label className="mb-2 block text-sm font-medium text-slate-700">
+            Produtos específicos (opcional)
+          </label>
+          <MultiSelect
+            options={productOptions}
+            selected={value.productSkus}
+            onChange={(skus) => onChange({ ...value, productSkus: skus })}
+            allLabel="Todos os produtos"
+            placeholder="Buscar produto por nome ou SKU…"
+          />
+          <p className="mt-1.5 text-xs text-slate-400">
+            Deixe vazio para incluir todos. Escolha aqui se quiser um relatório só
+            de alguns produtos.
+          </p>
+        </div>
 
         {/* Cobertura por curva */}
         <div>
