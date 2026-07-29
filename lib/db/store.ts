@@ -22,6 +22,17 @@ export interface BlingToken {
   expiresAt: number;
 }
 
+/** Produto sincronizado do Bling para o banco (lido rápido pela interface). */
+export interface CachedProduct {
+  sku: string;
+  name: string;
+  cost: number;
+  price: number;
+  stock: number;
+  supplierId: string;
+  supplierName: string;
+}
+
 export interface SettingsStore {
   getProductCurves(): Promise<Record<string, Curve>>;
   setProductCurve(sku: string, curve: Curve): Promise<void>;
@@ -32,6 +43,8 @@ export interface SettingsStore {
   getBlingToken(): Promise<BlingToken | null>;
   saveBlingToken(token: BlingToken): Promise<void>;
   clearBlingToken(): Promise<void>;
+  replaceProductCache(products: CachedProduct[]): Promise<void>;
+  getCachedProducts(): Promise<CachedProduct[]>;
 }
 
 // ---------- Implementação em memória (dev sem banco) ----------
@@ -41,6 +54,7 @@ class MemoryStore implements SettingsStore {
   private leadTimes = new Map<string, number>();
   private consumption = new Map<string, number>();
   private token: BlingToken | null = null;
+  private productCache: CachedProduct[] = [];
 
   async getProductCurves() {
     return Object.fromEntries(this.curves);
@@ -68,6 +82,12 @@ class MemoryStore implements SettingsStore {
   }
   async clearBlingToken() {
     this.token = null;
+  }
+  async replaceProductCache(products: CachedProduct[]) {
+    this.productCache = products;
+  }
+  async getCachedProducts() {
+    return this.productCache;
   }
 }
 
@@ -112,6 +132,16 @@ async function ensureSchema(url: string): Promise<void> {
         await sql`create table if not exists monthly_consumption (
           sku text primary key,
           cm numeric not null default 0,
+          updated_at timestamptz not null default now()
+        )`;
+        await sql`create table if not exists product_cache (
+          sku text primary key,
+          name text not null default '',
+          cost numeric not null default 0,
+          price numeric not null default 0,
+          stock numeric not null default 0,
+          supplier_id text not null default '',
+          supplier_name text not null default '',
           updated_at timestamptz not null default now()
         )`;
       } finally {
@@ -229,6 +259,60 @@ class PostgresStore implements SettingsStore {
 
   async clearBlingToken() {
     await this.run((sql) => sql`delete from bling_oauth where id = 'default'`);
+  }
+
+  async replaceProductCache(products: CachedProduct[]) {
+    await this.run(async (sql) => {
+      await sql`truncate table product_cache`;
+      // Insere em lotes para não estourar o tamanho da query.
+      const CHUNK = 500;
+      for (let i = 0; i < products.length; i += CHUNK) {
+        const slice = products.slice(i, i + CHUNK).map((p) => ({
+          sku: p.sku,
+          name: p.name,
+          cost: p.cost,
+          price: p.price,
+          stock: p.stock,
+          supplier_id: p.supplierId,
+          supplier_name: p.supplierName,
+        }));
+        await sql`insert into product_cache ${sql(
+          slice,
+          "sku",
+          "name",
+          "cost",
+          "price",
+          "stock",
+          "supplier_id",
+          "supplier_name",
+        )}`;
+      }
+    });
+  }
+
+  getCachedProducts() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<
+        {
+          sku: string;
+          name: string;
+          cost: number;
+          price: number;
+          stock: number;
+          supplier_id: string;
+          supplier_name: string;
+        }[]
+      >`select sku, name, cost, price, stock, supplier_id, supplier_name from product_cache`;
+      return rows.map((r) => ({
+        sku: r.sku,
+        name: r.name,
+        cost: Number(r.cost),
+        price: Number(r.price),
+        stock: Number(r.stock),
+        supplierId: r.supplier_id,
+        supplierName: r.supplier_name,
+      }));
+    }, [] as CachedProduct[]);
   }
 }
 

@@ -24,12 +24,34 @@ export default function ProdutosPage() {
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
-  useEffect(() => {
+  function loadProducts() {
     fetch("/api/products")
       .then((r) => r.json())
-      .then((d) => setRows(d.products));
+      .then((d) => setRows(d.products ?? []));
+  }
+
+  useEffect(() => {
+    loadProducts();
   }, []);
+
+  async function sync() {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const r = await fetch("/api/bling/sync", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Falha na sincronização.");
+      setSyncMsg(`${d.count} produtos sincronizados do Bling.`);
+      loadProducts();
+    } catch (e) {
+      setSyncMsg(e instanceof Error ? e.message : "Falha na sincronização.");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function changeCurve(row: ProductRow, curve: ProductRow["curve"]) {
     setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, curve } : r)));
@@ -50,14 +72,26 @@ export default function ProdutosPage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Produtos e curvas
-        </h1>
-        <p className="text-sm text-slate-500">
-          Defina a curva (A, B, C) de cada produto. A escolha é salva
-          automaticamente e passa a valer no relatório de compra.
-        </p>
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Produtos e curvas
+          </h1>
+          <p className="text-sm text-slate-500">
+            Defina a curva (A, B, C) de cada produto. A escolha é salva
+            automaticamente e passa a valer no relatório de compra.
+          </p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            onClick={sync}
+            disabled={syncing}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+          >
+            {syncing ? "Sincronizando…" : "Sincronizar com o Bling"}
+          </button>
+          {syncMsg && <span className="text-xs text-slate-500">{syncMsg}</span>}
+        </div>
       </header>
 
       <input
@@ -115,6 +149,12 @@ export default function ProdutosPage() {
             ))}
           </tbody>
         </table>
+        {rows.length === 0 && (
+          <div className="px-4 py-10 text-center text-sm text-slate-400">
+            Nenhum produto ainda. Clique em{" "}
+            <b>Sincronizar com o Bling</b> para importar os produtos.
+          </div>
+        )}
       </div>
     </div>
   );
