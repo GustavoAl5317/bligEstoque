@@ -10,9 +10,18 @@ interface Status {
   databaseError?: string | null;
 }
 
+interface Job {
+  months: number;
+  processed: number;
+  done: boolean;
+}
+
 export default function ConexaoPage() {
   const [status, setStatus] = useState<Status | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
+  const [consRunning, setConsRunning] = useState(false);
+  const [consMsg, setConsMsg] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -29,11 +38,47 @@ export default function ConexaoPage() {
   }
   useEffect(() => {
     load();
+    fetch("/api/bling/sync-consumption")
+      .then((r) => r.json())
+      .then((d) => setJob(d.job ?? null))
+      .catch(() => {});
   }, []);
 
   async function disconnect() {
     await fetch("/api/bling/status", { method: "DELETE" });
     load();
+  }
+
+  // Roda o cálculo de consumo em blocos até terminar (retomável).
+  async function runConsumption(restart: boolean) {
+    setConsRunning(true);
+    setConsMsg(null);
+    try {
+      let body = restart ? { start: 6 } : {};
+      // Loop: cada chamada processa ~100 pedidos (~35s).
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const r = await fetch("/api/bling/sync-consumption", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Falha no cálculo.");
+        body = {};
+        setJob({ months: 6, processed: d.processed, done: d.done });
+        setConsMsg(
+          d.done
+            ? `Concluído! ${d.cmCount} produtos com consumo atualizado (${d.processed} pedidos).`
+            : `Processando… ${d.processed} pedidos.`,
+        );
+        if (d.done) break;
+      }
+    } catch (e) {
+      setConsMsg(e instanceof Error ? e.message : "Falha no cálculo.");
+    } finally {
+      setConsRunning(false);
+    }
   }
 
   return (
@@ -118,6 +163,43 @@ export default function ConexaoPage() {
               </p>
             )}
           </Card>
+
+          {/* Consumo mensal pelas vendas */}
+          {status.connected && (
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-2 text-sm font-medium text-slate-700">
+                Consumo mensal (pelas vendas do Bling)
+              </div>
+              <p className="mb-3 text-sm text-slate-500">
+                Calcula o consumo de cada produto pela média de vendas dos{" "}
+                <b>últimos 6 meses</b>. É um processo pesado (~30 min): pode
+                deixar rodando. Se fechar a página, dá para continuar depois.
+                Rode <b>1x por mês</b>.
+              </p>
+
+              {consMsg && (
+                <p className="mb-3 text-sm text-slate-600">{consMsg}</p>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => runConsumption(true)}
+                  disabled={consRunning}
+                  className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
+                >
+                  {consRunning ? "Processando…" : "Calcular consumo (6 meses)"}
+                </button>
+                {job && !job.done && !consRunning && (
+                  <button
+                    onClick={() => runConsumption(false)}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400"
+                  >
+                    Continuar ({job.processed} pedidos)
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

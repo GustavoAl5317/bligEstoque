@@ -42,6 +42,16 @@ export interface ProductSupplierLink {
   supplierName: string;
 }
 
+/** Estado do cálculo de consumo pelas vendas (processado em etapas). */
+export interface ConsumptionJob {
+  periodStart: string;
+  periodEnd: string;
+  months: number;
+  nextPage: number;
+  processed: number;
+  done: boolean;
+}
+
 export interface SettingsStore {
   getProductCurves(): Promise<Record<string, Curve>>;
   setProductCurve(sku: string, curve: Curve): Promise<void>;
@@ -57,6 +67,14 @@ export interface SettingsStore {
   replaceProductCache(products: CachedProduct[]): Promise<void>;
   getCachedProducts(): Promise<CachedProduct[]>;
   replaceProductSuppliers(links: ProductSupplierLink[]): Promise<void>;
+
+  // Cálculo de consumo pelas vendas (processado em etapas).
+  getConsumptionJob(): Promise<ConsumptionJob | null>;
+  startConsumptionJob(job: ConsumptionJob): Promise<void>;
+  saveConsumptionProgress(nextPage: number, processed: number, done: boolean): Promise<void>;
+  addConsumptionSales(entries: { sku: string; qty: number }[]): Promise<void>;
+  /** Grava o consumo mensal (total vendido / meses) e devolve quantos produtos. */
+  finalizeConsumption(months: number): Promise<number>;
 }
 
 // ---------- Implementação em memória (dev sem banco) ----------
@@ -68,6 +86,8 @@ class MemoryStore implements SettingsStore {
   private token: BlingToken | null = null;
   private productCache: CachedProduct[] = [];
   private supplierLinks = new Map<string, ProductSupplierLink>();
+  private job: ConsumptionJob | null = null;
+  private sales = new Map<string, number>();
 
   async getProductCurves() {
     return Object.fromEntries(this.curves);
@@ -107,6 +127,27 @@ class MemoryStore implements SettingsStore {
   }
   async replaceProductSuppliers(links: ProductSupplierLink[]) {
     this.supplierLinks = new Map(links.map((l) => [l.blingId, l]));
+  }
+  async getConsumptionJob() {
+    return this.job;
+  }
+  async startConsumptionJob(job: ConsumptionJob) {
+    this.job = job;
+    this.sales.clear();
+  }
+  async saveConsumptionProgress(nextPage: number, processed: number, done: boolean) {
+    if (this.job) this.job = { ...this.job, nextPage, processed, done };
+  }
+  async addConsumptionSales(entries: { sku: string; qty: number }[]) {
+    for (const e of entries) this.sales.set(e.sku, (this.sales.get(e.sku) ?? 0) + e.qty);
+  }
+  async finalizeConsumption(months: number) {
+    let n = 0;
+    for (const [sku, qty] of this.sales) {
+      this.consumption.set(sku, qty / months);
+      n++;
+    }
+    return n;
   }
   async getCachedProducts() {
     return this.productCache.map((p) => {
@@ -173,6 +214,20 @@ async function ensureSchema(url: string): Promise<void> {
           updated_at timestamptz not null default now()
         )`;
         await sql`alter table product_cache add column if not exists bling_id text not null default ''`;
+        await sql`create table if not exists consumption_job (
+          id text primary key default 'current',
+          period_start date not null,
+          period_end date not null,
+          months integer not null,
+          next_page integer not null default 1,
+          processed integer not null default 0,
+          done boolean not null default false,
+          updated_at timestamptz not null default now()
+        )`;
+        await sql`create table if not exists consumption_sales (
+          sku text primary key,
+          qty numeric not null default 0
+        )`;
         await sql`create table if not exists product_supplier (
           bling_id text primary key,
           supplier_id text not null default '',
@@ -362,6 +417,80 @@ class PostgresStore implements SettingsStore {
           "supplier_name",
         )}`;
       }
+    });
+  }
+
+  async getConsumptionJob() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<
+        {
+          period_start: string;
+          period_end: string;
+          months: number;
+          next_page: number;
+          processed: number;
+          done: boolean;
+        }[]
+      >`select period_start, period_end, months, next_page, processed, done
+          from consumption_job where id = 'current'`;
+      if (rows.length === 0) return null;
+      const r = rows[0];
+      return {
+        periodStart: String(r.period_start).slice(0, 10),
+        periodEnd: String(r.period_end).slice(0, 10),
+        months: r.months,
+        nextPage: r.next_page,
+        processed: r.processed,
+        done: r.done,
+      };
+    }, null as ConsumptionJob | null);
+  }
+
+  async startConsumptionJob(job: ConsumptionJob) {
+    await this.run(async (sql) => {
+      await sql`truncate table consumption_sales`;
+      await sql`insert into consumption_job (id, period_start, period_end, months, next_page, processed, done, updated_at)
+        values ('current', ${job.periodStart}, ${job.periodEnd}, ${job.months}, ${job.nextPage}, ${job.processed}, ${job.done}, now())
+        on conflict (id) do update set
+          period_start = excluded.period_start,
+          period_end = excluded.period_end,
+          months = excluded.months,
+          next_page = excluded.next_page,
+          processed = excluded.processed,
+          done = excluded.done,
+          updated_at = now()`;
+    });
+  }
+
+  async saveConsumptionProgress(nextPage: number, processed: number, done: boolean) {
+    await this.run(
+      (sql) => sql`update consumption_job set next_page = ${nextPage},
+        processed = ${processed}, done = ${done}, updated_at = now() where id = 'current'`,
+    );
+  }
+
+  async addConsumptionSales(entries: { sku: string; qty: number }[]) {
+    if (entries.length === 0) return;
+    await this.run(async (sql) => {
+      const CHUNK = 500;
+      for (let i = 0; i < entries.length; i += CHUNK) {
+        const slice = entries.slice(i, i + CHUNK);
+        await sql`insert into consumption_sales ${sql(slice, "sku", "qty")}
+          on conflict (sku) do update set qty = consumption_sales.qty + excluded.qty`;
+      }
+    });
+  }
+
+  async finalizeConsumption(months: number) {
+    return this.run(async (sql) => {
+      // CM = total vendido ÷ meses, só para SKUs que existem no cadastro.
+      const res = await sql`
+        insert into monthly_consumption (sku, cm, updated_at)
+        select cs.sku, cs.qty / ${months}, now()
+          from consumption_sales cs
+          join product_cache pc on pc.sku = cs.sku
+        on conflict (sku) do update set cm = excluded.cm, updated_at = now()`;
+      return res.count;
     });
   }
 
