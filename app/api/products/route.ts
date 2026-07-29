@@ -20,6 +20,9 @@ export async function GET() {
       supplierName: supplierName.get(p.supplierId) ?? "—",
       curve: p.curve,
       monthlyConsumption: p.monthlyConsumption,
+      stock: p.stock,
+      cost: p.cost,
+      price: p.price,
     })),
   });
 }
