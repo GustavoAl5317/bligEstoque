@@ -1,0 +1,116 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { Logo } from "./Logo";
+
+const links = [
+  {
+    href: "/",
+    label: "Relatório de compra",
+    desc: "Sugestão do que comprar",
+    icon: (
+      <path d="M4 5h16M4 12h16M4 19h10" strokeWidth="2" strokeLinecap="round" />
+    ),
+  },
+  {
+    href: "/produtos",
+    label: "Produtos e curvas",
+    desc: "Classifique seus produtos",
+    icon: (
+      <path
+        d="M4 7l8-4 8 4v10l-8 4-8-4V7z M4 7l8 4 8-4 M12 21V11"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+  {
+    href: "/conexao",
+    label: "Conexão Bling",
+    desc: "Sincronizar dados",
+    icon: (
+      <path
+        d="M9 7V4m6 3V4M8 7h8a2 2 0 012 2v3a6 6 0 01-12 0V9a2 2 0 012-2zM12 18v3"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+];
+
+export function Sidebar() {
+  const pathname = usePathname();
+  const router = useRouter();
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
+
+  return (
+    <aside className="flex w-full shrink-0 flex-col border-b border-black/5 bg-white md:h-screen md:w-64 md:border-b-0 md:border-r">
+      <div className="px-5 py-5">
+        <Logo />
+      </div>
+
+      <nav className="flex-1 space-y-1 px-3">
+        {links.map((l) => {
+          const active = pathname === l.href;
+          return (
+            <Link
+              key={l.href}
+              href={l.href}
+              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 transition ${
+                active
+                  ? "bg-brand-tint text-brand-dark"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                {l.icon}
+              </svg>
+              <span className="flex flex-col leading-tight">
+                <span className="text-sm font-medium">{l.label}</span>
+                <span className="text-xs text-slate-400">{l.desc}</span>
+              </span>
+            </Link>
+          );
+        })}
+      </nav>
+
+      <div className="border-t border-black/5 p-3">
+        <button
+          onClick={logout}
+          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-500 transition hover:bg-slate-50"
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              d="M15 12H4m0 0l3.5-3.5M4 12l3.5 3.5M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Sair
+        </button>
+      </div>
+    </aside>
+  );
+}

@@ -78,7 +78,7 @@ export function FilterForm({
                   onClick={() => toggleSupplier(s.id)}
                   className={`rounded-full border px-3 py-1 text-sm transition ${
                     active
-                      ? "border-slate-900 bg-slate-900 text-white"
+                      ? "border-brand bg-brand text-white"
                       : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
                   }`}
                 >
@@ -110,7 +110,7 @@ export function FilterForm({
                   onClick={() => toggleCurve(c)}
                   className={`h-9 w-9 rounded-lg border text-sm font-semibold transition ${
                     active
-                      ? "border-slate-900 bg-slate-900 text-white"
+                      ? "border-brand bg-brand text-white"
                       : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
                   }`}
                 >
@@ -182,7 +182,7 @@ export function FilterForm({
                   onClick={() => onChange({ ...value, safetyFactor: opt.value })}
                   className={`rounded-lg border px-3 py-1.5 text-sm transition ${
                     active
-                      ? "border-slate-900 bg-slate-900 text-white"
+                      ? "border-brand bg-brand text-white"
                       : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
                   }`}
                 >
@@ -198,7 +198,7 @@ export function FilterForm({
         <button
           type="submit"
           disabled={loading}
-          className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+          className="rounded-lg bg-brand px-5 py-2.5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
         >
           {loading ? "Calculando…" : "Gerar relatório"}
         </button>

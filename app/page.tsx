@@ -94,6 +94,28 @@ export default function Home() {
         </div>
       )}
 
+      <details className="mb-6 rounded-xl border border-brand-light/60 bg-brand-tint/60 px-4 py-3 text-sm">
+        <summary className="cursor-pointer font-medium text-brand-dark">
+          Como o sistema decide quanto comprar?
+        </summary>
+        <div className="mt-3 space-y-2 text-slate-600">
+          <p>
+            Para cada produto, o sistema olha <b>quanto você vende por mês</b>,{" "}
+            <b>quanto já tem em estoque</b> e <b>quanto o fornecedor demora</b>{" "}
+            para entregar.
+          </p>
+          <p>
+            Com os filtros abaixo você diz por <b>quantos dias</b> quer que a
+            compra dure (cobertura) e se quer uma <b>folga de segurança</b> para
+            não faltar. O sistema calcula a quantidade ideal e mostra o custo.
+          </p>
+          <p className="text-slate-400">
+            Fórmula: (venda diária × cobertura) − o que sobra no estoque quando o
+            pedido chegar.
+          </p>
+        </div>
+      </details>
+
       <FilterForm
         suppliers={meta?.suppliers ?? []}
         curves={meta?.curves ?? []}

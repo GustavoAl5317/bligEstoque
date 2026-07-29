@@ -78,7 +78,7 @@ export default function ConexaoPage() {
             {status.configured && !status.connected && (
               <a
                 href="/api/bling/connect"
-                className="inline-block rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700"
+                className="inline-block rounded-lg bg-brand px-5 py-2.5 text-sm font-medium text-white transition hover:bg-brand-dark"
               >
                 Conectar ao Bling
               </a>

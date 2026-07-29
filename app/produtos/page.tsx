@@ -93,7 +93,7 @@ export default function ProdutosPage() {
           <button
             onClick={sync}
             disabled={syncing}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
           >
             {syncing ? "Sincronizando…" : "Sincronizar com o Bling"}
           </button>
@@ -139,7 +139,7 @@ export default function ProdutosPage() {
                           onClick={() => changeCurve(r, c)}
                           className={`h-8 w-8 rounded-lg text-sm font-semibold transition ${
                             r.curve === c
-                              ? CURVE_COLOR[c] + " ring-2 ring-slate-900"
+                              ? CURVE_COLOR[c] + " ring-2 ring-brand"
                               : "border border-slate-200 text-slate-400 hover:border-slate-400"
                           }`}
                         >
