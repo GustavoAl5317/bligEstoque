@@ -82,7 +82,8 @@ function calcProduct(
   const dailyStdDev = product.monthlyConsumptionStdDev / Math.sqrt(DAYS_IN_MONTH);
 
   const coverageDays =
-    filters.coverageByCurve?.[product.curve] ?? filters.coverageDays;
+    (product.curve && filters.coverageByCurve?.[product.curve]) ??
+    filters.coverageDays;
   const stockAtArrival = Math.max(0, product.stock - dailyDemand * leadTimeDays);
   const coverageDemand = dailyDemand * coverageDays;
   const safetyStock =
@@ -96,7 +97,7 @@ function calcProduct(
     sku: product.sku,
     name: product.name,
     supplierName,
-    curve: product.curve,
+    curve: product.curve ?? "",
     currentStock: product.stock,
     monthlyConsumption: product.monthlyConsumption,
     leadTimeDays,
@@ -118,7 +119,11 @@ export function calcReplenishment(
 
   const rows = products
     .filter((p) => filters.supplierIds.length === 0 || filters.supplierIds.includes(p.supplierId))
-    .filter((p) => filters.curves.length === 0 || filters.curves.includes(p.curve))
+    .filter(
+      (p) =>
+        filters.curves.length === 0 ||
+        (p.curve != null && filters.curves.includes(p.curve)),
+    )
     .filter((p) => skuSet.size === 0 || skuSet.has(p.sku))
     .map((p) => {
       const supplier = supplierById.get(p.supplierId);

@@ -55,7 +55,8 @@ export interface ProductListing {
   sku: string;
   name: string;
   supplierName: string;
-  curve: Curve;
+  /** null = não classificado. */
+  curve: Curve | null;
   monthlyConsumption: number;
   stock: number;
   cost: number;
@@ -77,6 +78,8 @@ export interface SettingsStore {
   setProductCurve(sku: string, curve: Curve): Promise<void>;
   /** Define a mesma curva para vários produtos de uma vez. */
   setProductCurves(skus: string[], curve: Curve): Promise<void>;
+  /** Remove a curva (volta a "não classificado") de vários produtos. */
+  clearProductCurves(skus: string[]): Promise<void>;
   getSupplierLeadTimes(): Promise<Record<string, number>>;
   setSupplierLeadTime(id: string, days: number): Promise<void>;
   getMonthlyConsumption(): Promise<Record<string, number>>;
@@ -119,6 +122,9 @@ class MemoryStore implements SettingsStore {
   }
   async setProductCurves(skus: string[], curve: Curve) {
     for (const sku of skus) this.curves.set(sku, curve);
+  }
+  async clearProductCurves(skus: string[]) {
+    for (const sku of skus) this.curves.delete(sku);
   }
   async getSupplierLeadTimes() {
     return Object.fromEntries(this.leadTimes);
@@ -187,7 +193,7 @@ class MemoryStore implements SettingsStore {
         sku: p.sku,
         name: p.name,
         supplierName: link?.supplierName || p.supplierName || "—",
-        curve: this.curves.get(p.sku) ?? ("C" as Curve),
+        curve: this.curves.get(p.sku) ?? null,
         monthlyConsumption: this.consumption.get(p.sku) ?? 0,
         stock: p.stock,
         cost: p.cost,
@@ -330,6 +336,17 @@ class PostgresStore implements SettingsStore {
         const slice = skus.slice(i, i + CHUNK).map((sku) => ({ sku, curve }));
         await sql`insert into product_settings ${sql(slice, "sku", "curve")}
           on conflict (sku) do update set curve = excluded.curve, updated_at = now()`;
+      }
+    });
+  }
+
+  async clearProductCurves(skus: string[]) {
+    if (skus.length === 0) return;
+    await this.run(async (sql) => {
+      const CHUNK = 500;
+      for (let i = 0; i < skus.length; i += CHUNK) {
+        const slice = skus.slice(i, i + CHUNK);
+        await sql`delete from product_settings where sku in ${sql(slice)}`;
       }
     });
   }
@@ -592,7 +609,7 @@ class PostgresStore implements SettingsStore {
         sku: r.sku,
         name: r.name,
         supplierName: r.supplier_name ?? "—",
-        curve: (r.curve ?? "C") as Curve,
+        curve: (r.curve as Curve) ?? null,
         monthlyConsumption: r.cm != null ? Number(r.cm) : 0,
         stock: Number(r.stock),
         cost: Number(r.cost),

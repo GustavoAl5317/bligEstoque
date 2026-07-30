@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import type { Supplier } from "@/lib/bling/types";
+import { CURVES, type Supplier } from "@/lib/bling/types";
 import { MultiSelect, type Option } from "@/components/MultiSelect";
 
 export interface FilterState {
@@ -134,8 +134,8 @@ export function FilterForm({
           <label className="mb-1.5 block text-sm font-medium text-slate-700">
             Cobertura desejada (dias) — por curva
           </label>
-          <div className="flex flex-wrap gap-3">
-            {(["A", "B", "C"] as const).map((c) => (
+          <div className="flex flex-wrap gap-2.5">
+            {CURVES.map((c) => (
               <label key={c} className="flex items-center gap-1.5">
                 <span className="text-sm font-semibold text-slate-500">{c}</span>
                 <input
@@ -151,7 +151,7 @@ export function FilterForm({
                       },
                     })
                   }
-                  className="w-20 rounded-lg border border-slate-300 px-2 py-2 text-sm outline-none focus:border-brand"
+                  className="w-16 rounded-lg border border-slate-300 px-2 py-2 text-sm outline-none focus:border-brand"
                 />
               </label>
             ))}

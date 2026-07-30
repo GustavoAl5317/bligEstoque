@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDataSource } from "@/lib/bling/client";
+import { CURVES } from "@/lib/bling/types";
 
 // Fornece as opções dos filtros (fornecedores e curvas) e a origem dos dados.
 export async function GET() {
@@ -9,12 +10,10 @@ export async function GET() {
     ds.listProducts(),
   ]);
 
-  const curves = [...new Set(products.map((p) => p.curve))].sort();
-
   return NextResponse.json({
     source: ds.source,
     suppliers,
-    curves,
+    curves: CURVES,
     productCount: products.length,
   });
 }

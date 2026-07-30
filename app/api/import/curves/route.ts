@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getStore } from "@/lib/db/store";
-import type { Curve } from "@/lib/bling/types";
+import { CURVES, type Curve } from "@/lib/bling/types";
 
 // Lê a planilha enviada e importa a CURVA de cada produto (por SKU).
 // A curva é a única informação manual da planilha — o resto vem do Bling.
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const VALID: Curve[] = ["A", "B", "C"];
+// Mapa MAIÚSCULO -> curva canônica (aceita "new", "NEW", "New" etc.).
+const CANON = new Map<string, Curve>(CURVES.map((c) => [c.toUpperCase(), c]));
 
 /** Normaliza o SKU: número/texto -> texto, sem ".0" no fim. */
 function normSku(v: unknown): string {
@@ -58,9 +59,9 @@ export async function POST(req: NextRequest) {
     for (const row of rows) {
       const sku = normSku(pick(row, ["sku", "código", "codigo", "cod"]));
       const raw = pick(row, ["curva", "classif.", "classif", "curva abc"]);
-      const curve = String(raw ?? "").trim().toUpperCase();
-      if (!sku || !VALID.includes(curve as Curve)) continue;
-      bySku.set(sku, curve as Curve); // última ocorrência vence
+      const curve = CANON.get(String(raw ?? "").trim().toUpperCase());
+      if (!sku || !curve) continue;
+      bySku.set(sku, curve); // última ocorrência vence
       found++;
     }
     if (found > 0) {
@@ -80,18 +81,24 @@ export async function POST(req: NextRequest) {
   }
 
   // Agrupa por curva e grava em lote.
-  const groups: Record<Curve, string[]> = { A: [], B: [], C: [] };
-  for (const [sku, curve] of bySku) groups[curve].push(sku);
+  const groups = new Map<Curve, string[]>();
+  for (const [sku, curve] of bySku) {
+    const arr = groups.get(curve) ?? [];
+    arr.push(sku);
+    groups.set(curve, arr);
+  }
 
   const store = getStore();
-  for (const curve of VALID) {
-    if (groups[curve].length > 0) await store.setProductCurves(groups[curve], curve);
+  const byCurve: Record<string, number> = {};
+  for (const [curve, skus] of groups) {
+    await store.setProductCurves(skus, curve);
+    byCurve[curve] = skus.length;
   }
 
   return NextResponse.json({
     ok: true,
     sheet: usedSheet,
     total: bySku.size,
-    byCurve: { A: groups.A.length, B: groups.B.length, C: groups.C.length },
+    byCurve,
   });
 }

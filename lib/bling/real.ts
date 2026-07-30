@@ -101,7 +101,7 @@ export class BlingApiDataSource implements BlingDataSource {
       sku: p.sku,
       name: p.name,
       supplierId: p.supplierId || "sem-fornecedor",
-      curve: curves[p.sku] ?? "C",
+      curve: curves[p.sku] ?? null,
       stock: p.stock,
       cost: p.cost,
       price: p.price,
@@ -138,7 +138,14 @@ export class BlingApiDataSource implements BlingDataSource {
     );
 
     const cache: CachedProduct[] = produtos
-      .filter((p) => str(p.tipo, "P") === "P" && str(p.codigo) !== "")
+      // Só produtos (tipo P), com código, e ATIVOS (situacao "A").
+      // Bling: situacao "A" = Ativo, "I" = Inativo, "E" = Excluído.
+      .filter(
+        (p) =>
+          str(p.tipo, "P") === "P" &&
+          str(p.codigo) !== "" &&
+          str(p.situacao, "A").toUpperCase() === "A",
+      )
       .map((p) => {
         const estoque = (p.estoque as Json) ?? {};
         return {
