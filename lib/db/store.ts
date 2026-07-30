@@ -81,6 +81,13 @@ export interface ConsumptionJob {
   done: boolean;
 }
 
+/** Snapshot de saldo de estoque (para calcular consumo real). */
+export interface StockSnapshot {
+  sku: string;
+  stock: number;
+  date: string; // YYYY-MM-DD
+}
+
 export interface SettingsStore {
   getProductCurves(): Promise<Record<string, Curve>>;
   setProductCurve(sku: string, curve: Curve): Promise<void>;
@@ -114,6 +121,14 @@ export interface SettingsStore {
   addConsumptionSales(entries: { sku: string; qty: number }[]): Promise<void>;
   /** Grava o consumo mensal (total vendido / meses) e devolve quantos produtos. */
   finalizeConsumption(months: number): Promise<number>;
+
+  // Snapshots de estoque (consumo por variação de saldo).
+  /** Salva snapshot do saldo atual de todos os produtos (uma foto do estoque). */
+  saveStockSnapshot(entries: StockSnapshot[]): Promise<void>;
+  /** Retorna as datas distintas de snapshots já salvos, do mais antigo ao mais recente. */
+  getSnapshotDates(): Promise<string[]>;
+  /** Calcula consumo mensal = (saldo_antigo − saldo_atual) / meses, grava em monthly_consumption. */
+  calcConsumptionFromSnapshots(): Promise<number>;
 }
 
 // ---------- Implementação em memória (dev sem banco) ----------
@@ -128,6 +143,7 @@ class MemoryStore implements SettingsStore {
   private supplierLinks = new Map<string, ProductSupplierLink>();
   private job: ConsumptionJob | null = null;
   private sales = new Map<string, number>();
+  private snapshots: StockSnapshot[] = [];
 
   async getProductCurves() {
     return Object.fromEntries(this.curves);
@@ -197,6 +213,45 @@ class MemoryStore implements SettingsStore {
     let n = 0;
     for (const [sku, qty] of this.sales) {
       this.consumption.set(sku, qty / months);
+      n++;
+    }
+    return n;
+  }
+
+  async saveStockSnapshot(entries: StockSnapshot[]) {
+    // Remove snapshots antigos da mesma data e adiciona os novos.
+    const date = entries[0]?.date;
+    if (!date) return;
+    this.snapshots = this.snapshots.filter((s) => s.date !== date);
+    this.snapshots.push(...entries);
+  }
+
+  async getSnapshotDates() {
+    const dates = [...new Set(this.snapshots.map((s) => s.date))].sort();
+    return dates;
+  }
+
+  async calcConsumptionFromSnapshots() {
+    const dates = [...new Set(this.snapshots.map((s) => s.date))].sort();
+    if (dates.length < 2) return 0;
+    const oldest = dates[0];
+    const newest = dates[dates.length - 1];
+    // Período em meses (mínimo 1).
+    const daysDiff = (new Date(newest).getTime() - new Date(oldest).getTime()) / (1000 * 60 * 60 * 24);
+    const months = Math.max(1, daysDiff / 30);
+    // Mapeia saldos.
+    const oldStock = new Map<string, number>();
+    const newStock = new Map<string, number>();
+    for (const s of this.snapshots) {
+      if (s.date === oldest) oldStock.set(s.sku, s.stock);
+      if (s.date === newest) newStock.set(s.sku, s.stock);
+    }
+    let n = 0;
+    for (const [sku, old] of oldStock) {
+      const cur = newStock.get(sku) ?? old;
+      const consumed = Math.max(0, old - cur);
+      const cm = Math.round(consumed / months);
+      this.consumption.set(sku, cm);
       n++;
     }
     return n;
@@ -315,6 +370,12 @@ async function ensureSchema(url: string): Promise<void> {
         await sql`create table if not exists production_incoming (
           sku text primary key,
           qty numeric not null default 0
+        )`;
+        await sql`create table if not exists stock_snapshots (
+          sku text not null,
+          stock numeric not null default 0,
+          snapshot_date date not null,
+          primary key (sku, snapshot_date)
         )`;
       } finally {
         await sql.end({ timeout: 5 });
@@ -611,6 +672,61 @@ class PostgresStore implements SettingsStore {
         select cs.sku, cs.qty / ${months}, now()
           from consumption_sales cs
           join product_cache pc on pc.sku = cs.sku
+        on conflict (sku) do update set cm = excluded.cm, updated_at = now()`;
+      return res.count;
+    });
+  }
+
+  async saveStockSnapshot(entries: StockSnapshot[]) {
+    if (entries.length === 0) return;
+    await this.run(async (sql) => {
+      const date = entries[0].date;
+      // Remove snapshot da mesma data (substitui).
+      await sql`delete from stock_snapshots where snapshot_date = ${date}`;
+      const CHUNK = 500;
+      for (let i = 0; i < entries.length; i += CHUNK) {
+        const slice = entries.slice(i, i + CHUNK).map((e) => ({
+          sku: e.sku,
+          stock: e.stock,
+          snapshot_date: e.date,
+        }));
+        await sql`insert into stock_snapshots ${sql(slice, "sku", "stock", "snapshot_date")}`;
+      }
+    });
+  }
+
+  async getSnapshotDates() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ snapshot_date: string }[]>`
+        select distinct snapshot_date from stock_snapshots order by snapshot_date`;
+      return rows.map((r) => isoDate(r.snapshot_date));
+    }, [] as string[]);
+  }
+
+  async calcConsumptionFromSnapshots() {
+    return this.run(async (sql) => {
+      // Pega a data mais antiga e mais recente.
+      const dates = await sql<{ oldest: string; newest: string }[]>`
+        select min(snapshot_date) as oldest, max(snapshot_date) as newest
+          from stock_snapshots`;
+      if (dates.length === 0 || !dates[0].oldest || !dates[0].newest) return 0;
+      const oldest = isoDate(dates[0].oldest);
+      const newest = isoDate(dates[0].newest);
+      if (oldest === newest) return 0;
+      // Período em meses (mínimo 1).
+      const daysDiff = (new Date(newest).getTime() - new Date(oldest).getTime()) / (1000 * 60 * 60 * 24);
+      const months = Math.max(1, daysDiff / 30);
+      // Calcula consumo: (saldo_antigo − saldo_atual), se positivo.
+      const res = await sql`
+        insert into monthly_consumption (sku, cm, updated_at)
+        select old_s.sku,
+               greatest(0, (old_s.stock - coalesce(new_s.stock, old_s.stock))) / ${months},
+               now()
+          from stock_snapshots old_s
+          left join stock_snapshots new_s
+            on new_s.sku = old_s.sku and new_s.snapshot_date = ${newest}::date
+          join product_cache pc on pc.sku = old_s.sku
+         where old_s.snapshot_date = ${oldest}::date
         on conflict (sku) do update set cm = excluded.cm, updated_at = now()`;
       return res.count;
     });

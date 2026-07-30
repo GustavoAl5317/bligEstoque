@@ -158,7 +158,7 @@ export class BlingApiDataSource implements BlingDataSource {
           name: str(p.nome, str(p.codigo)),
           cost: num(p.precoCusto),
           price: num(p.preco),
-          stock: num(estoque.saldoVirtualTotal),
+          stock: num(estoque.saldoVirtualTotal, num(estoque.saldoFisicoTotal)),
           supplierId: "",
           supplierName: "",
           supplierCode: "",
@@ -173,6 +173,11 @@ export class BlingApiDataSource implements BlingDataSource {
     );
 
     await getStore().replaceProductCache(unique);
+
+    // Tira a foto do estoque hoje para cálculo de consumo e já atualiza o consumo médio
+    await this.saveStockSnapshot();
+    await this.calcConsumptionFromSnapshots();
+
     return unique.length;
   }
 
@@ -239,88 +244,36 @@ export class BlingApiDataSource implements BlingDataSource {
     return links.length;
   }
 
-  // ---- Consumo mensal pelas vendas (processado em etapas) ----
+  // ---- Consumo mensal por snapshots de estoque ----
 
-  /** Inicia o cálculo: janela = últimos `months` meses a partir de hoje. */
-  async startConsumptionCalc(months: number): Promise<void> {
-    const end = new Date();
-    const start = new Date();
-    start.setMonth(start.getMonth() - months);
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
-    await getStore().startConsumptionJob({
-      periodStart: fmt(start),
-      periodEnd: fmt(end),
-      months,
-      nextPage: 1,
-      processed: 0,
-      done: false,
-    });
+  /**
+   * Tira uma "foto" do estoque atual (lido do cache) e salva como snapshot.
+   * Cada snapshot tem a data de hoje. Chamar periodicamente (ex.: a cada sync).
+   */
+  async saveStockSnapshot(): Promise<number> {
+    const store = getStore();
+    const products = await store.getCachedProducts();
+    const today = new Date().toISOString().slice(0, 10);
+    const entries = products.map((p) => ({
+      sku: p.sku,
+      stock: p.stock,
+      date: today,
+    }));
+    await store.saveStockSnapshot(entries);
+    return entries.length;
   }
 
   /**
-   * Processa UMA página de pedidos (100): busca os itens de cada um (em lotes
-   * paralelos, respeitando 3 req/s) e soma as quantidades por SKU. Retorna o
-   * progresso. Quando acaba, grava o consumo mensal.
+   * Calcula o consumo mensal comparando o snapshot mais antigo com o mais recente.
+   * Retorna quantos SKUs foram atualizados.
    */
-  async processConsumptionChunk(): Promise<{
-    done: boolean;
-    processed: number;
-    page: number;
-    cmCount?: number;
-  }> {
-    const store = getStore();
-    const job = await store.getConsumptionJob();
-    if (!job) throw new Error("Nenhum cálculo em andamento.");
-    if (job.done) return { done: true, processed: job.processed, page: job.nextPage };
+  async calcConsumptionFromSnapshots(): Promise<number> {
+    return getStore().calcConsumptionFromSnapshots();
+  }
 
-    const period = `dataInicial=${job.periodStart}&dataFinal=${job.periodEnd}`;
-    const list = await this.get<{ data?: Json[] }>(
-      `/pedidos/vendas?limite=${PAGE_LIMIT}&pagina=${job.nextPage}&${period}`,
-    );
-    const orders = list.data ?? [];
-
-    // Ignora pedidos cancelados (situacao 12).
-    const ids = orders
-      .filter((o) => Number((o.situacao as Json)?.id) !== 12)
-      .map((o) => str(o.id))
-      .filter(Boolean);
-
-    // Busca os itens de cada pedido em lotes de 3 (respeita o limite).
-    const qtyBySku = new Map<string, number>();
-    for (let i = 0; i < ids.length; i += 3) {
-      const batch = ids.slice(i, i + 3);
-      const started = Date.now();
-      const details = await Promise.all(
-        batch.map((id) =>
-          this.get<{ data?: { itens?: Json[] } }>(`/pedidos/vendas/${id}`).catch(
-            () => ({ data: { itens: [] } }),
-          ),
-        ),
-      );
-      for (const d of details) {
-        for (const it of d.data?.itens ?? []) {
-          const sku = str(it.codigo);
-          const q = num(it.quantidade);
-          if (sku && q > 0) qtyBySku.set(sku, (qtyBySku.get(sku) ?? 0) + q);
-        }
-      }
-      const elapsed = Date.now() - started;
-      if (i + 3 < ids.length && elapsed < 1100) await sleep(1100 - elapsed);
-    }
-
-    await store.addConsumptionSales(
-      [...qtyBySku.entries()].map(([sku, qty]) => ({ sku, qty })),
-    );
-
-    const processed = job.processed + orders.length;
-    const done = orders.length < PAGE_LIMIT;
-    await store.saveConsumptionProgress(job.nextPage + 1, processed, done);
-
-    if (done) {
-      const cmCount = await store.finalizeConsumption(job.months);
-      return { done: true, processed, page: job.nextPage, cmCount };
-    }
-    return { done: false, processed, page: job.nextPage };
+  /** Retorna as datas de snapshots disponíveis. */
+  async getSnapshotDates(): Promise<string[]> {
+    return getStore().getSnapshotDates();
   }
 }
 
