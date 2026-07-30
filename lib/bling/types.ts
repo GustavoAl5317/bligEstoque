@@ -29,6 +29,10 @@ export interface Product {
   sku: string;
   name: string;
   supplierId: string;
+  /** Código do produto no fornecedor (para fazer o pedido). */
+  supplierCode: string;
+  /** Descrição do produto no fornecedor. */
+  supplierDesc: string;
   /** Classificação ABC do produto. null = não classificado. */
   curve: Curve | null;
   /** Saldo de estoque atual (Bling: estoque.saldoVirtualTotal). */

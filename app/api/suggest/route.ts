@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     productSkus: Array.isArray(body.productSkus) ? body.productSkus : [],
     coverageDays: Number(body.coverageDays) || 30,
     coverageByCurve,
-    safetyFactor: Number(body.safetyFactor) || 0,
+    safetyPercent: Number(body.safetyPercent) || 0,
     leadTimeOverrideDays:
       body.leadTimeOverrideDays != null && Number(body.leadTimeOverrideDays) > 0
         ? Number(body.leadTimeOverrideDays)

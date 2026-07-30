@@ -9,7 +9,6 @@ import {
   type ProductOption,
 } from "@/components/FilterForm";
 import { ResultsTable } from "@/components/ResultsTable";
-import { DEFAULT_COVERAGE_BY_CURVE } from "@/lib/bling/types";
 
 interface Metadata {
   source: "mock" | "bling";
@@ -23,9 +22,8 @@ const initialFilters: FilterState = {
   curves: [],
   productSkus: [],
   coverageDays: 30,
-  coverageByCurve: { ...DEFAULT_COVERAGE_BY_CURVE },
-  safetyFactor: 0,
-  leadTimeOverrideDays: 30,
+  safetyPercent: "",
+  leadTimeOverrideDays: "",
 };
 
 export default function Home() {
@@ -65,9 +63,10 @@ export default function Home() {
           supplierIds: filters.supplierIds,
           curves: filters.curves,
           productSkus: filters.productSkus,
-          coverageDays: filters.coverageDays,
-          coverageByCurve: filters.coverageByCurve,
-          safetyFactor: filters.safetyFactor,
+          coverageDays: filters.coverageDays === "" ? 30 : Number(filters.coverageDays),
+          coverageByCurve: {},
+          safetyPercent:
+            filters.safetyPercent === "" ? 0 : Number(filters.safetyPercent),
           leadTimeOverrideDays:
             filters.leadTimeOverrideDays === ""
               ? null

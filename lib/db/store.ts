@@ -41,6 +41,8 @@ export interface CachedProduct {
   stock: number;
   supplierId: string;
   supplierName: string;
+  supplierCode: string;
+  supplierDesc: string;
 }
 
 /** Ligação produto→fornecedor, sincronizada à parte. */
@@ -48,6 +50,10 @@ export interface ProductSupplierLink {
   blingId: string;
   supplierId: string;
   supplierName: string;
+  /** Código do produto no fornecedor. */
+  supplierCode: string;
+  /** Descrição do produto no fornecedor. */
+  supplierDesc: string;
 }
 
 /** Linha pronta para a tela de Produtos e curvas (já com curva/consumo/fornecedor). */
@@ -199,7 +205,13 @@ class MemoryStore implements SettingsStore {
     return this.productCache.map((p) => {
       const link = this.supplierLinks.get(p.blingId);
       return link
-        ? { ...p, supplierId: link.supplierId, supplierName: link.supplierName }
+        ? {
+            ...p,
+            supplierId: link.supplierId,
+            supplierName: link.supplierName,
+            supplierCode: link.supplierCode,
+            supplierDesc: link.supplierDesc,
+          }
         : p;
     });
   }
@@ -294,8 +306,12 @@ async function ensureSchema(url: string): Promise<void> {
         await sql`create table if not exists product_supplier (
           bling_id text primary key,
           supplier_id text not null default '',
-          supplier_name text not null default ''
+          supplier_name text not null default '',
+          supplier_code text not null default '',
+          supplier_desc text not null default ''
         )`;
+        await sql`alter table product_supplier add column if not exists supplier_code text not null default ''`;
+        await sql`alter table product_supplier add column if not exists supplier_desc text not null default ''`;
         await sql`create table if not exists production_incoming (
           sku text primary key,
           qty numeric not null default 0
@@ -511,12 +527,16 @@ class PostgresStore implements SettingsStore {
           bling_id: l.blingId,
           supplier_id: l.supplierId,
           supplier_name: l.supplierName,
+          supplier_code: l.supplierCode,
+          supplier_desc: l.supplierDesc,
         }));
         await sql`insert into product_supplier ${sql(
           slice,
           "bling_id",
           "supplier_id",
           "supplier_name",
+          "supplier_code",
+          "supplier_desc",
         )}`;
       }
     });
@@ -608,10 +628,14 @@ class PostgresStore implements SettingsStore {
           stock: number;
           supplier_id: string | null;
           supplier_name: string | null;
+          supplier_code: string | null;
+          supplier_desc: string | null;
         }[]
       >`select pc.sku, pc.name, pc.cost, pc.price, pc.stock,
                coalesce(ps.supplier_id, pc.supplier_id) as supplier_id,
-               coalesce(ps.supplier_name, pc.supplier_name) as supplier_name
+               coalesce(ps.supplier_name, pc.supplier_name) as supplier_name,
+               ps.supplier_code as supplier_code,
+               ps.supplier_desc as supplier_desc
           from product_cache pc
           left join product_supplier ps on ps.bling_id = pc.bling_id`;
       return rows.map((r) => ({
@@ -623,6 +647,8 @@ class PostgresStore implements SettingsStore {
         stock: Number(r.stock),
         supplierId: r.supplier_id ?? "",
         supplierName: r.supplier_name ?? "",
+        supplierCode: r.supplier_code ?? "",
+        supplierDesc: r.supplier_desc ?? "",
       }));
     }, [] as CachedProduct[]);
   }

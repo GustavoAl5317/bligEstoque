@@ -102,6 +102,8 @@ export class BlingApiDataSource implements BlingDataSource {
       sku: p.sku,
       name: p.name,
       supplierId: p.supplierId || "sem-fornecedor",
+      supplierCode: p.supplierCode,
+      supplierDesc: p.supplierDesc,
       curve: curves[p.sku] ?? null,
       stock: p.stock,
       inProduction: production[p.sku] ?? 0,
@@ -159,6 +161,8 @@ export class BlingApiDataSource implements BlingDataSource {
           stock: num(estoque.saldoVirtualTotal),
           supplierId: "",
           supplierName: "",
+          supplierCode: "",
+          supplierDesc: "",
         };
       });
 
@@ -182,7 +186,10 @@ export class BlingApiDataSource implements BlingDataSource {
     const rows = await this.paginate(
       (page) => `/produtos/fornecedores?pagina=${page}&limite=${PAGE_LIMIT}`,
     );
-    const linkByProduct = new Map<string, { supplierId: string; padrao: boolean }>();
+    const linkByProduct = new Map<
+      string,
+      { supplierId: string; padrao: boolean; code: string; desc: string }
+    >();
     for (const row of rows) {
       const produtoId = str((row.produto as Json)?.id);
       const fornecedorId = str((row.fornecedor as Json)?.id);
@@ -190,7 +197,13 @@ export class BlingApiDataSource implements BlingDataSource {
       if (!produtoId || !fornecedorId) continue;
       const cur = linkByProduct.get(produtoId);
       if (!cur || (padrao && !cur.padrao)) {
-        linkByProduct.set(produtoId, { supplierId: fornecedorId, padrao });
+        linkByProduct.set(produtoId, {
+          supplierId: fornecedorId,
+          padrao,
+          // Código e descrição do produto NO fornecedor (para o pedido).
+          code: str(row.codigo),
+          desc: str(row.descricao),
+        });
       }
     }
 
@@ -219,6 +232,8 @@ export class BlingApiDataSource implements BlingDataSource {
       blingId,
       supplierId: l.supplierId,
       supplierName: nameById.get(l.supplierId) ?? `Fornecedor ${l.supplierId}`,
+      supplierCode: l.code,
+      supplierDesc: l.desc,
     }));
     await getStore().replaceProductSuppliers(links);
     return links.length;

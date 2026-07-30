@@ -19,8 +19,8 @@ export interface CalcFilters {
   coverageDays: number;
   /** Cobertura por curva (ex.: A=60, B=30, C=30). Tem prioridade sobre coverageDays. */
   coverageByCurve?: Record<string, number>;
-  /** Fator de segurança (nº de desvios padrão). 0 = sem estoque de segurança. */
-  safetyFactor: number;
+  /** Fator de segurança em %, aplicado sobre a demanda de cobertura. 0/vazio = sem folga. */
+  safetyPercent: number;
   /** Override opcional do prazo de produção (dias). Vazio = usa o do fornecedor. */
   leadTimeOverrideDays?: number | null;
 }
@@ -30,12 +30,20 @@ export interface SuggestionRow {
   sku: string;
   name: string;
   supplierName: string;
+  /** Código e descrição do produto no fornecedor (para o pedido). */
+  supplierCode: string;
+  supplierDesc: string;
   curve: string;
   currentStock: number;
   monthlyConsumption: number;
   leadTimeDays: number;
   dailyDemand: number;
   safetyStock: number;
+  price: number;
+  /** Markup = preço de venda ÷ custo. null quando não dá para calcular. */
+  markup: number | null;
+  /** Duração do estoque em dias (estoque ÷ demanda diária). null se não vende. */
+  stockDurationDays: number | null;
   /** Quantidade sugerida de compra (unidades). */
   suggestedQty: number;
   cost: number;
@@ -79,7 +87,6 @@ function calcProduct(
   supplierName: string,
 ): SuggestionRow {
   const dailyDemand = product.monthlyConsumption / DAYS_IN_MONTH;
-  const dailyStdDev = product.monthlyConsumptionStdDev / Math.sqrt(DAYS_IN_MONTH);
 
   const coverageDays =
     (product.curve && filters.coverageByCurve?.[product.curve]) ??
@@ -88,17 +95,22 @@ function calcProduct(
   const effectiveStock = product.stock + (product.inProduction ?? 0);
   const stockAtArrival = Math.max(0, effectiveStock - dailyDemand * leadTimeDays);
   const coverageDemand = dailyDemand * coverageDays;
-  const safetyStock =
-    filters.safetyFactor * dailyStdDev * Math.sqrt(Math.max(leadTimeDays, 0));
+  // Fator de segurança: % de folga sobre a demanda de cobertura (opcional).
+  const safetyStock = coverageDemand * (Math.max(0, filters.safetyPercent) / 100);
 
   const raw = coverageDemand + safetyStock - stockAtArrival;
   const suggestedQty = Math.max(0, Math.ceil(raw));
+
+  const markup = product.cost > 0 && product.price > 0 ? product.price / product.cost : null;
+  const stockDurationDays = dailyDemand > 0 ? effectiveStock / dailyDemand : null;
 
   return {
     productId: product.id,
     sku: product.sku,
     name: product.name,
     supplierName,
+    supplierCode: product.supplierCode,
+    supplierDesc: product.supplierDesc,
     curve: product.curve ?? "",
     // Estoque considerado no cálculo = estoque do dia + em produção.
     currentStock: effectiveStock,
@@ -106,6 +118,9 @@ function calcProduct(
     leadTimeDays,
     dailyDemand: round(dailyDemand, 2),
     safetyStock: Math.round(safetyStock),
+    price: product.price,
+    markup: markup != null ? round(markup, 2) : null,
+    stockDurationDays: stockDurationDays != null ? Math.round(stockDurationDays) : null,
     suggestedQty,
     cost: product.cost,
     totalCost: round(suggestedQty * product.cost, 2),
