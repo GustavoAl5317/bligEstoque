@@ -12,7 +12,7 @@ const suppliers: Supplier[] = [
   { id: "f4", name: "Componentes Rápidos ME", leadTimeDays: 7 },
 ];
 
-const products: Product[] = [
+const products: Omit<Product, "inProduction">[] = [
   { id: "p01", sku: "PAR-001", name: "Parafuso sextavado M6", supplierId: "f1", curve: "A", stock: 320, cost: 0.45, price: 1.2, monthlyConsumption: 1800, monthlyConsumptionStdDev: 260 },
   { id: "p02", sku: "PAR-002", name: "Parafuso sextavado M8", supplierId: "f1", curve: "A", stock: 140, cost: 0.62, price: 1.6, monthlyConsumption: 1200, monthlyConsumptionStdDev: 190 },
   { id: "p03", sku: "POR-010", name: "Porca M6 zincada", supplierId: "f1", curve: "B", stock: 900, cost: 0.18, price: 0.5, monthlyConsumption: 1500, monthlyConsumptionStdDev: 140 },
@@ -41,9 +41,14 @@ export class MockBlingDataSource implements BlingDataSource {
   }
 
   async listProducts(): Promise<Product[]> {
-    const curves = await getStore().getProductCurves();
-    return products.map((p) =>
-      curves[p.sku] ? { ...p, curve: curves[p.sku] } : p,
-    );
+    const [curves, production] = await Promise.all([
+      getStore().getProductCurves(),
+      getStore().getProductionIncoming(),
+    ]);
+    return products.map((p) => ({
+      ...p,
+      curve: curves[p.sku] ?? p.curve,
+      inProduction: production[p.sku] ?? 0,
+    }));
   }
 }

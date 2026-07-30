@@ -26,6 +26,19 @@ const links = [
     ),
   },
   {
+    href: "/producao",
+    label: "Em produção",
+    desc: "Somar ao estoque",
+    icon: (
+      <path
+        d="M3 21h18M6 21V8l6-4 6 4v13M9 21v-6h6v6"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+  {
     href: "/conexao",
     label: "Conexão Bling",
     desc: "Sincronizar dados",

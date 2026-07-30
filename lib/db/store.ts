@@ -59,6 +59,8 @@ export interface ProductListing {
   curve: Curve | null;
   monthlyConsumption: number;
   stock: number;
+  /** Quantidade em produção no fornecedor (importada). */
+  inProduction: number;
   cost: number;
   price: number;
 }
@@ -84,6 +86,12 @@ export interface SettingsStore {
   setSupplierLeadTime(id: string, days: number): Promise<void>;
   getMonthlyConsumption(): Promise<Record<string, number>>;
   setMonthlyConsumption(sku: string, cm: number): Promise<void>;
+  /** Quantidade em produção no fornecedor, por SKU. */
+  getProductionIncoming(): Promise<Record<string, number>>;
+  /** Substitui TODA a tabela de "em produção" (snapshot do momento). */
+  replaceProductionIncoming(entries: { sku: string; qty: number }[]): Promise<void>;
+  /** Zera a tabela de "em produção". */
+  clearProductionIncoming(): Promise<void>;
   getBlingToken(): Promise<BlingToken | null>;
   saveBlingToken(token: BlingToken): Promise<void>;
   clearBlingToken(): Promise<void>;
@@ -108,6 +116,7 @@ class MemoryStore implements SettingsStore {
   private curves = new Map<string, Curve>();
   private leadTimes = new Map<string, number>();
   private consumption = new Map<string, number>();
+  private production = new Map<string, number>();
   private token: BlingToken | null = null;
   private productCache: CachedProduct[] = [];
   private supplierLinks = new Map<string, ProductSupplierLink>();
@@ -137,6 +146,15 @@ class MemoryStore implements SettingsStore {
   }
   async setMonthlyConsumption(sku: string, cm: number) {
     this.consumption.set(sku, cm);
+  }
+  async getProductionIncoming() {
+    return Object.fromEntries(this.production);
+  }
+  async replaceProductionIncoming(entries: { sku: string; qty: number }[]) {
+    this.production = new Map(entries.map((e) => [e.sku, e.qty]));
+  }
+  async clearProductionIncoming() {
+    this.production.clear();
   }
   async getBlingToken() {
     return this.token;
@@ -196,6 +214,7 @@ class MemoryStore implements SettingsStore {
         curve: this.curves.get(p.sku) ?? null,
         monthlyConsumption: this.consumption.get(p.sku) ?? 0,
         stock: p.stock,
+        inProduction: this.production.get(p.sku) ?? 0,
         cost: p.cost,
         price: p.price,
       };
@@ -276,6 +295,10 @@ async function ensureSchema(url: string): Promise<void> {
           bling_id text primary key,
           supplier_id text not null default '',
           supplier_name text not null default ''
+        )`;
+        await sql`create table if not exists production_incoming (
+          sku text primary key,
+          qty numeric not null default 0
         )`;
       } finally {
         await sql.end({ timeout: 5 });
@@ -383,6 +406,30 @@ class PostgresStore implements SettingsStore {
         values (${sku}, ${cm}, now())
         on conflict (sku) do update set cm = excluded.cm, updated_at = now()`,
     );
+  }
+
+  getProductionIncoming() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ sku: string; qty: number }[]>`
+        select sku, qty from production_incoming where qty <> 0`;
+      return Object.fromEntries(rows.map((r) => [r.sku, Number(r.qty)]));
+    }, {} as Record<string, number>);
+  }
+
+  async replaceProductionIncoming(entries: { sku: string; qty: number }[]) {
+    await this.run(async (sql) => {
+      await sql`truncate table production_incoming`;
+      const CHUNK = 500;
+      for (let i = 0; i < entries.length; i += CHUNK) {
+        const slice = entries.slice(i, i + CHUNK);
+        await sql`insert into production_incoming ${sql(slice, "sku", "qty")}
+          on conflict (sku) do update set qty = excluded.qty`;
+      }
+    });
+  }
+
+  async clearProductionIncoming() {
+    await this.run((sql) => sql`truncate table production_incoming`);
   }
 
   getBlingToken() {
@@ -593,17 +640,20 @@ class PostgresStore implements SettingsStore {
           curve: string | null;
           cm: number | null;
           stock: number;
+          in_production: number | null;
           cost: number;
           price: number;
         }[]
       >`select pc.sku, pc.name, pc.stock, pc.cost, pc.price,
                coalesce(nullif(ps.supplier_name, ''), nullif(pc.supplier_name, '')) as supplier_name,
                s.curve as curve,
-               mc.cm as cm
+               mc.cm as cm,
+               pi.qty as in_production
           from product_cache pc
           left join product_supplier ps on ps.bling_id = pc.bling_id
           left join product_settings s on s.sku = pc.sku
           left join monthly_consumption mc on mc.sku = pc.sku
+          left join production_incoming pi on pi.sku = pc.sku
          order by pc.name`;
       return rows.map((r) => ({
         sku: r.sku,
@@ -612,6 +662,7 @@ class PostgresStore implements SettingsStore {
         curve: (r.curve as Curve) ?? null,
         monthlyConsumption: r.cm != null ? Number(r.cm) : 0,
         stock: Number(r.stock),
+        inProduction: r.in_production != null ? Number(r.in_production) : 0,
         cost: Number(r.cost),
         price: Number(r.price),
       }));

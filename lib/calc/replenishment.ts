@@ -84,7 +84,9 @@ function calcProduct(
   const coverageDays =
     (product.curve && filters.coverageByCurve?.[product.curve]) ??
     filters.coverageDays;
-  const stockAtArrival = Math.max(0, product.stock - dailyDemand * leadTimeDays);
+  // Estoque final = estoque do dia + o que está em produção no fornecedor.
+  const effectiveStock = product.stock + (product.inProduction ?? 0);
+  const stockAtArrival = Math.max(0, effectiveStock - dailyDemand * leadTimeDays);
   const coverageDemand = dailyDemand * coverageDays;
   const safetyStock =
     filters.safetyFactor * dailyStdDev * Math.sqrt(Math.max(leadTimeDays, 0));
@@ -98,7 +100,8 @@ function calcProduct(
     name: product.name,
     supplierName,
     curve: product.curve ?? "",
-    currentStock: product.stock,
+    // Estoque considerado no cálculo = estoque do dia + em produção.
+    currentStock: effectiveStock,
     monthlyConsumption: product.monthlyConsumption,
     leadTimeDays,
     dailyDemand: round(dailyDemand, 2),

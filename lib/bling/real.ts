@@ -91,10 +91,11 @@ export class BlingApiDataSource implements BlingDataSource {
 
   async listProducts(): Promise<Product[]> {
     const store = getStore();
-    const [cached, curves, consumption] = await Promise.all([
+    const [cached, curves, consumption, production] = await Promise.all([
       store.getCachedProducts(),
       store.getProductCurves(),
       store.getMonthlyConsumption(),
+      store.getProductionIncoming(),
     ]);
     return cached.map((p) => ({
       id: p.sku,
@@ -103,6 +104,7 @@ export class BlingApiDataSource implements BlingDataSource {
       supplierId: p.supplierId || "sem-fornecedor",
       curve: curves[p.sku] ?? null,
       stock: p.stock,
+      inProduction: production[p.sku] ?? 0,
       cost: p.cost,
       price: p.price,
       monthlyConsumption: consumption[p.sku] ?? 0,

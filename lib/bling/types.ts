@@ -33,6 +33,8 @@ export interface Product {
   curve: Curve | null;
   /** Saldo de estoque atual (Bling: estoque.saldoVirtualTotal). */
   stock: number;
+  /** Quantidade em produção no fornecedor (importada). Soma ao estoque no cálculo. */
+  inProduction: number;
   /** Custo unitário de compra. */
   cost: number;
   /** Preço de venda. */
