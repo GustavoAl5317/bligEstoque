@@ -333,6 +333,72 @@ export class BlingApiDataSource implements BlingDataSource {
     return links.length;
   }
 
+  // ---- Composições de kits (para decompor o consumo) ----
+
+  /** Inicia a sincronização das composições de kits (zera e começa da página 1). */
+  async startKitSync(): Promise<void> {
+    await getStore().startKitJob();
+  }
+
+  /**
+   * Processa UMA página de produtos (100): busca o detalhe de cada um, extrai a
+   * composição (estrutura.componentes) dos que são kits e grava kit→componente.
+   * O componente vem por id do Bling → resolvido para SKU pelo cache. Resumível.
+   */
+  async processKitChunk(): Promise<{ done: boolean; processed: number; kits: number }> {
+    const store = getStore();
+    const job = await store.getKitJob();
+    if (!job) throw new Error("Nenhuma sincronização de kits em andamento.");
+    if (job.done) return { done: true, processed: job.processed, kits: job.kits };
+
+    const idMap = await store.getBlingIdMap(); // id do Bling → SKU
+    const list = await this.get<{ data?: Json[] }>(
+      `/produtos?pagina=${job.nextPage}&limite=${PAGE_LIMIT}`,
+    );
+    const items = list.data ?? [];
+    const ids = items.map((p) => str(p.id)).filter(Boolean);
+
+    const rows: { kitSku: string; componentSku: string; qty: number }[] = [];
+    let kitsFound = 0;
+    for (let i = 0; i < ids.length; i += 3) {
+      const batch = ids.slice(i, i + 3);
+      const started = Date.now();
+      const details = await Promise.all(
+        batch.map((id) =>
+          this.get<{ data?: Json }>(`/produtos/${id}`).catch(() => ({ data: undefined })),
+        ),
+      );
+      for (const d of details) {
+        const p = d.data as Json | undefined;
+        if (!p) continue;
+        const kitSku = str(p.codigo);
+        const estrutura = p.estrutura as Json | undefined;
+        const comps = estrutura?.componentes as Json[] | undefined;
+        if (!kitSku || !Array.isArray(comps) || comps.length === 0) continue;
+        let added = false;
+        for (const c of comps) {
+          const compId = str((c.produto as Json)?.id);
+          const qty = num(c.quantidade, 1);
+          const compSku = idMap[compId];
+          if (compSku && qty > 0) {
+            rows.push({ kitSku, componentSku: compSku, qty });
+            added = true;
+          }
+        }
+        if (added) kitsFound++;
+      }
+      const elapsed = Date.now() - started;
+      if (i + 3 < ids.length && elapsed < 1100) await sleep(1100 - elapsed);
+    }
+
+    await store.addKitComponents(rows);
+    const processed = job.processed + items.length;
+    const kits = job.kits + kitsFound;
+    const done = items.length < PAGE_LIMIT;
+    await store.saveKitProgress({ nextPage: job.nextPage + 1, processed, kits, done });
+    return { done, processed, kits };
+  }
+
   // ---- Consumo mensal por snapshots de estoque ----
 
   /**

@@ -13,6 +13,8 @@ interface Status {
 export default function ConexaoPage() {
   const [status, setStatus] = useState<Status | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [kitRunning, setKitRunning] = useState(false);
+  const [kitMsg, setKitMsg] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -27,7 +29,7 @@ export default function ConexaoPage() {
       );
     }
   }
-  
+
   useEffect(() => {
     load();
   }, []);
@@ -35,6 +37,36 @@ export default function ConexaoPage() {
   async function disconnect() {
     await fetch("/api/bling/status", { method: "DELETE" });
     load();
+  }
+
+  // Sincroniza as composições dos kits em blocos até terminar (resumível).
+  async function runKitSync() {
+    setKitRunning(true);
+    setKitMsg("Lendo os produtos e montando os kits…");
+    try {
+      let body: object = { restart: true };
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const r = await fetch("/api/bling/sync-kits", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Falha ao sincronizar kits.");
+        body = {};
+        setKitMsg(
+          d.done
+            ? `Concluído! ${d.kits} kits mapeados (${d.processed} produtos lidos).`
+            : `Processando… ${d.processed} produtos lidos, ${d.kits} kits até agora.`,
+        );
+        if (d.done) break;
+      }
+    } catch (e) {
+      setKitMsg(e instanceof Error ? e.message : "Falha ao sincronizar kits.");
+    } finally {
+      setKitRunning(false);
+    }
   }
 
   return (
@@ -119,6 +151,28 @@ export default function ConexaoPage() {
               </p>
             )}
           </Card>
+
+          {status.connected && (
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-1 text-sm font-medium text-slate-700">
+                Composição dos kits
+              </div>
+              <p className="mb-3 text-sm text-slate-500">
+                Lê a composição de cada kit no Bling (quais itens formam cada kit).
+                Assim, quando um kit vende, o consumo vai para os itens certos, e
+                não para o kit. É um processo pesado (~alguns minutos): rode{" "}
+                <b>1x</b> e sempre que criar novos kits.
+              </p>
+              {kitMsg && <p className="mb-3 text-sm text-slate-600">{kitMsg}</p>}
+              <button
+                onClick={runKitSync}
+                disabled={kitRunning}
+                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
+              >
+                {kitRunning ? "Processando…" : "Sincronizar composição dos kits"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -88,6 +88,21 @@ export interface StockSnapshot {
   date: string; // YYYY-MM-DD
 }
 
+/** Estado da sincronização das composições de kits (processada em etapas). */
+export interface KitJob {
+  nextPage: number;
+  processed: number;
+  kits: number;
+  done: boolean;
+}
+
+/** Ligação kit → componente (item que forma o kit). */
+export interface KitComponent {
+  kitSku: string;
+  componentSku: string;
+  qty: number;
+}
+
 export interface SettingsStore {
   getProductCurves(): Promise<Record<string, Curve>>;
   setProductCurve(sku: string, curve: Curve): Promise<void>;
@@ -122,6 +137,17 @@ export interface SettingsStore {
   /** Grava o consumo mensal (total vendido / meses) e devolve quantos produtos. */
   finalizeConsumption(months: number): Promise<number>;
 
+  // Composições de kits (sincronizadas do Bling, em etapas).
+  /** Mapa id-do-Bling → SKU (para resolver os componentes dos kits). */
+  getBlingIdMap(): Promise<Record<string, string>>;
+  getKitJob(): Promise<KitJob | null>;
+  startKitJob(): Promise<void>;
+  saveKitProgress(job: KitJob): Promise<void>;
+  /** Adiciona ligações kit→componente (acumula durante o processamento). */
+  addKitComponents(rows: KitComponent[]): Promise<void>;
+  /** Kit → lista de componentes (para decompor o consumo). */
+  getKitComponents(): Promise<Record<string, { sku: string; qty: number }[]>>;
+
   // Snapshots de estoque (consumo por variação de saldo).
   /** Salva snapshot do saldo atual de todos os produtos (uma foto do estoque). */
   saveStockSnapshot(entries: StockSnapshot[]): Promise<void>;
@@ -144,6 +170,8 @@ class MemoryStore implements SettingsStore {
   private job: ConsumptionJob | null = null;
   private sales = new Map<string, number>();
   private snapshots: StockSnapshot[] = [];
+  private kitJob: KitJob | null = null;
+  private kitComponents: KitComponent[] = [];
 
   async getProductCurves() {
     return Object.fromEntries(this.curves);
@@ -216,6 +244,32 @@ class MemoryStore implements SettingsStore {
       n++;
     }
     return n;
+  }
+
+  async getBlingIdMap() {
+    const map: Record<string, string> = {};
+    for (const p of this.productCache) if (p.blingId) map[p.blingId] = p.sku;
+    return map;
+  }
+  async getKitJob() {
+    return this.kitJob;
+  }
+  async startKitJob() {
+    this.kitJob = { nextPage: 1, processed: 0, kits: 0, done: false };
+    this.kitComponents = [];
+  }
+  async saveKitProgress(job: KitJob) {
+    this.kitJob = job;
+  }
+  async addKitComponents(rows: KitComponent[]) {
+    this.kitComponents.push(...rows);
+  }
+  async getKitComponents() {
+    const out: Record<string, { sku: string; qty: number }[]> = {};
+    for (const r of this.kitComponents) {
+      (out[r.kitSku] ??= []).push({ sku: r.componentSku, qty: r.qty });
+    }
+    return out;
   }
 
   async saveStockSnapshot(entries: StockSnapshot[]) {
@@ -370,6 +424,20 @@ async function ensureSchema(url: string): Promise<void> {
         await sql`create table if not exists production_incoming (
           sku text primary key,
           qty numeric not null default 0
+        )`;
+        await sql`create table if not exists kit_component (
+          kit_sku text not null,
+          component_sku text not null,
+          qty numeric not null default 1,
+          primary key (kit_sku, component_sku)
+        )`;
+        await sql`create table if not exists kit_job (
+          id text primary key default 'current',
+          next_page integer not null default 1,
+          processed integer not null default 0,
+          kits integer not null default 0,
+          done boolean not null default false,
+          updated_at timestamptz not null default now()
         )`;
         await sql`create table if not exists stock_snapshots (
           sku text not null,
@@ -675,6 +743,75 @@ class PostgresStore implements SettingsStore {
         on conflict (sku) do update set cm = excluded.cm, updated_at = now()`;
       return res.count;
     });
+  }
+
+  getBlingIdMap() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ bling_id: string; sku: string }[]>`
+        select bling_id, sku from product_cache where bling_id <> ''`;
+      return Object.fromEntries(rows.map((r) => [r.bling_id, r.sku]));
+    }, {} as Record<string, string>);
+  }
+
+  async getKitJob() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<
+        { next_page: number; processed: number; kits: number; done: boolean }[]
+      >`select next_page, processed, kits, done from kit_job where id = 'current'`;
+      if (rows.length === 0) return null;
+      const r = rows[0];
+      return {
+        nextPage: r.next_page,
+        processed: r.processed,
+        kits: r.kits,
+        done: r.done,
+      };
+    }, null as KitJob | null);
+  }
+
+  async startKitJob() {
+    await this.run(async (sql) => {
+      await sql`truncate table kit_component`;
+      await sql`insert into kit_job (id, next_page, processed, kits, done, updated_at)
+        values ('current', 1, 0, 0, false, now())
+        on conflict (id) do update set next_page = 1, processed = 0, kits = 0, done = false, updated_at = now()`;
+    });
+  }
+
+  async saveKitProgress(job: KitJob) {
+    await this.run(
+      (sql) => sql`update kit_job set next_page = ${job.nextPage},
+        processed = ${job.processed}, kits = ${job.kits}, done = ${job.done},
+        updated_at = now() where id = 'current'`,
+    );
+  }
+
+  async addKitComponents(rows: KitComponent[]) {
+    if (rows.length === 0) return;
+    await this.run(async (sql) => {
+      const CHUNK = 500;
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const slice = rows.slice(i, i + CHUNK).map((r) => ({
+          kit_sku: r.kitSku,
+          component_sku: r.componentSku,
+          qty: r.qty,
+        }));
+        await sql`insert into kit_component ${sql(slice, "kit_sku", "component_sku", "qty")}
+          on conflict (kit_sku, component_sku) do update set qty = excluded.qty`;
+      }
+    });
+  }
+
+  getKitComponents() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ kit_sku: string; component_sku: string; qty: number }[]>`
+        select kit_sku, component_sku, qty from kit_component`;
+      const out: Record<string, { sku: string; qty: number }[]> = {};
+      for (const r of rows) {
+        (out[r.kit_sku] ??= []).push({ sku: r.component_sku, qty: Number(r.qty) });
+      }
+      return out;
+    }, {} as Record<string, { sku: string; qty: number }[]>);
   }
 
   async saveStockSnapshot(entries: StockSnapshot[]) {
