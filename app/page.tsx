@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Supplier } from "@/lib/bling/types";
+import { DEFAULT_COVERAGE_BY_CURVE, type Supplier } from "@/lib/bling/types";
 import type { SuggestionResult } from "@/lib/calc/replenishment";
 import {
   FilterForm,
@@ -22,8 +22,9 @@ const initialFilters: FilterState = {
   curves: [],
   productSkus: [],
   coverageDays: 30,
+  coverageByCurve: { ...DEFAULT_COVERAGE_BY_CURVE },
   safetyPercent: "",
-  leadTimeOverrideDays: "",
+  leadTimeOverrideDays: 30,
 };
 
 export default function Home() {
@@ -64,7 +65,7 @@ export default function Home() {
           curves: filters.curves,
           productSkus: filters.productSkus,
           coverageDays: filters.coverageDays === "" ? 30 : Number(filters.coverageDays),
-          coverageByCurve: {},
+          coverageByCurve: filters.coverageByCurve,
           safetyPercent:
             filters.safetyPercent === "" ? 0 : Number(filters.safetyPercent),
           leadTimeOverrideDays:

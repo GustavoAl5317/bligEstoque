@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { type Supplier } from "@/lib/bling/types";
+import { CURVES, type Supplier } from "@/lib/bling/types";
 import { MultiSelect, type Option } from "@/components/MultiSelect";
 
 export interface FilterState {
@@ -9,8 +9,10 @@ export interface FilterState {
   curves: string[];
   /** SKUs de produtos específicos. Vazio = todos. */
   productSkus: string[];
-  /** Cobertura desejada de estoque, em dias. */
+  /** Cobertura desejada de estoque, em dias (fallback quando não há por curva). */
   coverageDays: number | "";
+  /** Cobertura (dias) por curva — ex.: A=60, AB=45, B=30. */
+  coverageByCurve: Record<string, number>;
   /** Fator de segurança em % (opcional). Vazio = sem folga. */
   safetyPercent: number | "";
   /** Vazio = usa o prazo do fornecedor. */
@@ -146,26 +148,35 @@ export function FilterForm({
           </p>
         </div>
 
-        {/* Cobertura desejada (DIREITA) */}
+        {/* Cobertura desejada por curva (DIREITA) */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-slate-700">
-            Cobertura desejada (dias)
+            Cobertura desejada (dias) — por curva
           </label>
-          <input
-            type="number"
-            min={1}
-            placeholder="Ex.: 30"
-            value={value.coverageDays}
-            onChange={(e) =>
-              onChange({
-                ...value,
-                coverageDays: e.target.value === "" ? "" : Number(e.target.value),
-              })
-            }
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand"
-          />
+          <div className="flex flex-wrap gap-2.5">
+            {CURVES.map((c) => (
+              <label key={c} className="flex items-center gap-1.5">
+                <span className="text-sm font-semibold text-slate-500">{c}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={value.coverageByCurve[c] ?? ""}
+                  onChange={(e) =>
+                    onChange({
+                      ...value,
+                      coverageByCurve: {
+                        ...value.coverageByCurve,
+                        [c]: Number(e.target.value),
+                      },
+                    })
+                  }
+                  className="w-16 rounded-lg border border-slate-300 px-2 py-2 text-sm outline-none focus:border-brand"
+                />
+              </label>
+            ))}
+          </div>
           <p className="mt-1.5 text-xs text-slate-400">
-            Quantos dias o pedido deve cobrir (ex.: 30 = um mês de estoque).
+            Quantos dias o pedido deve durar em cada curva (ex.: A=60, B=30, C=30).
           </p>
         </div>
 
