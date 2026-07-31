@@ -97,6 +97,9 @@ export class BlingApiDataSource implements BlingDataSource {
     withStructure: number;
     productKeys: string[];
     samples: { sku: string; name: string; estrutura: unknown }[];
+    listHasEstrutura?: boolean;
+    listItemKeys?: string[];
+    componentLookup?: unknown;
   }> {
     // Pega os IDs a inspecionar: um produto específico (por SKU) ou os primeiros da lista.
     let ids: string[] = [];
@@ -139,7 +142,38 @@ export class BlingApiDataSource implements BlingDataSource {
       if (i + 3 < ids.length && elapsed < 1100) await sleep(1100 - elapsed);
     }
 
-    return { scanned: ids.length, withStructure, productKeys, samples };
+    // Estrutura vem na LISTA de produtos ou só no detalhe? (define a estratégia de sync)
+    const listResp = await this.get<{ data?: Json[] }>(`/produtos?limite=3&pagina=1`);
+    const listItem = (listResp.data ?? [])[0] as Json | undefined;
+    const listItemKeys = listItem ? Object.keys(listItem) : [];
+    const listHasEstrutura = listItem ? "estrutura" in listItem : false;
+
+    // O componente de um kit é localizável como produto (tem código/SKU)?
+    let componentLookup: unknown = null;
+    const firstEstrutura = samples[0]?.estrutura as Json | undefined;
+    const comps = firstEstrutura?.componentes as Json[] | undefined;
+    const compId = comps && comps.length > 0 ? str((comps[0].produto as Json)?.id) : "";
+    if (compId) {
+      try {
+        const cd = await this.get<{ data?: Json }>(`/produtos/${compId}`);
+        const c = cd.data as Json | undefined;
+        componentLookup = c
+          ? { id: compId, codigo: str(c.codigo), tipo: str(c.tipo), nome: str(c.nome) }
+          : { id: compId, notFound: true };
+      } catch {
+        componentLookup = { id: compId, error: true };
+      }
+    }
+
+    return {
+      scanned: ids.length,
+      withStructure,
+      productKeys,
+      samples,
+      listHasEstrutura,
+      listItemKeys,
+      componentLookup,
+    };
   }
 
   // ---- Leitura para a interface (do cache no banco) ----
