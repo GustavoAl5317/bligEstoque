@@ -87,6 +87,61 @@ export class BlingApiDataSource implements BlingDataSource {
     return out;
   }
 
+  /**
+   * Diagnóstico: olha os produtos da conta e mostra se os KITS têm composição
+   * cadastrada (aba "Estrutura" do Bling). Usado para decidir como decompor o
+   * consumo de kits em seus itens. Se `sku` for passado, inspeciona esse produto.
+   */
+  async inspectKits(sku?: string): Promise<{
+    scanned: number;
+    withStructure: number;
+    productKeys: string[];
+    samples: { sku: string; name: string; estrutura: unknown }[];
+  }> {
+    // Pega os IDs a inspecionar: um produto específico (por SKU) ou os primeiros da lista.
+    let ids: string[] = [];
+    if (sku) {
+      const found = await this.get<{ data?: Json[] }>(
+        `/produtos?codigo=${encodeURIComponent(sku)}&limite=5`,
+      );
+      ids = (found.data ?? []).map((p) => str(p.id)).filter(Boolean);
+    } else {
+      const list = await this.get<{ data?: Json[] }>(`/produtos?limite=100&pagina=1`);
+      ids = (list.data ?? []).map((p) => str(p.id)).filter(Boolean).slice(0, 60);
+    }
+
+    const samples: { sku: string; name: string; estrutura: unknown }[] = [];
+    let productKeys: string[] = [];
+    let withStructure = 0;
+
+    for (let i = 0; i < ids.length; i += 3) {
+      const batch = ids.slice(i, i + 3);
+      const started = Date.now();
+      const details = await Promise.all(
+        batch.map((id) =>
+          this.get<{ data?: Json }>(`/produtos/${id}`).catch(() => ({ data: undefined })),
+        ),
+      );
+      for (const d of details) {
+        const p = d.data as Json | undefined;
+        if (!p) continue;
+        if (productKeys.length === 0) productKeys = Object.keys(p);
+        const estrutura = p.estrutura as Json | undefined;
+        const comps = estrutura?.componentes;
+        if (estrutura && Array.isArray(comps) && comps.length > 0) {
+          withStructure++;
+          if (samples.length < 5) {
+            samples.push({ sku: str(p.codigo), name: str(p.nome), estrutura });
+          }
+        }
+      }
+      const elapsed = Date.now() - started;
+      if (i + 3 < ids.length && elapsed < 1100) await sleep(1100 - elapsed);
+    }
+
+    return { scanned: ids.length, withStructure, productKeys, samples };
+  }
+
   // ---- Leitura para a interface (do cache no banco) ----
 
   async listProducts(): Promise<Product[]> {
