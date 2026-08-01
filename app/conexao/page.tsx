@@ -15,6 +15,8 @@ export default function ConexaoPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [kitRunning, setKitRunning] = useState(false);
   const [kitMsg, setKitMsg] = useState<string | null>(null);
+  const [consRunning, setConsRunning] = useState(false);
+  const [consMsg, setConsMsg] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -66,6 +68,36 @@ export default function ConexaoPage() {
       setKitMsg(e instanceof Error ? e.message : "Falha ao sincronizar kits.");
     } finally {
       setKitRunning(false);
+    }
+  }
+
+  // Calcula o consumo (vendas dos últimos 12 meses, kits decompostos) em blocos.
+  async function runConsumption() {
+    setConsRunning(true);
+    setConsMsg("Lendo as vendas dos últimos 12 meses…");
+    try {
+      let body: object = { restart: true };
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const r = await fetch("/api/bling/sync-consumption", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Falha no cálculo de consumo.");
+        body = {};
+        setConsMsg(
+          d.done
+            ? `Concluído! Consumo por item atualizado (${d.processed} pedidos lidos).`
+            : `Processando… ${d.processed} pedidos lidos.`,
+        );
+        if (d.done) break;
+      }
+    } catch (e) {
+      setConsMsg(e instanceof Error ? e.message : "Falha no cálculo de consumo.");
+    } finally {
+      setConsRunning(false);
     }
   }
 
@@ -170,6 +202,27 @@ export default function ConexaoPage() {
                 className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
               >
                 {kitRunning ? "Processando…" : "Sincronizar composição dos kits"}
+              </button>
+            </div>
+          )}
+
+          {status.connected && (
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-1 text-sm font-medium text-slate-700">
+                Consumo por item (últimos 12 meses)
+              </div>
+              <p className="mb-3 text-sm text-slate-500">
+                Calcula quanto cada item vende por mês, a partir das vendas — com
+                os <b>kits já contados nos seus itens</b>. É pesado (~30 min): pode
+                deixar rodando. Rode <b>1x por mês</b> (depois de sincronizar os kits).
+              </p>
+              {consMsg && <p className="mb-3 text-sm text-slate-600">{consMsg}</p>}
+              <button
+                onClick={runConsumption}
+                disabled={consRunning}
+                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
+              >
+                {consRunning ? "Processando…" : "Calcular consumo"}
               </button>
             </div>
           )}
