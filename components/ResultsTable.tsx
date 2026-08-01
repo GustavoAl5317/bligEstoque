@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { SuggestionResult, SuggestionRow } from "@/lib/calc/replenishment";
 import { formatBRL, formatInt } from "@/lib/format";
 
@@ -106,8 +106,8 @@ function buildCsv(rows: SuggestionRow[], colIds: string[]): string {
   return [header, ...lines].join("\n");
 }
 
-function download(result: SuggestionResult, colIds: string[]) {
-  const csv = "\uFEFF" + buildCsv(result.rows, colIds); // BOM p/ acentos no Excel
+function download(rows: SuggestionRow[], colIds: string[]) {
+  const csv = "\uFEFF" + buildCsv(rows, colIds); // BOM p/ acentos no Excel
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -120,11 +120,12 @@ function download(result: SuggestionResult, colIds: string[]) {
 // ── Modal de seleção de colunas ────────────────────────────────────────────
 
 interface ExportModalProps {
-  result: SuggestionResult;
+  /** Linhas já filtradas pelos produtos que a pessoa marcou na tabela. */
+  rows: SuggestionRow[];
   onClose: () => void;
 }
 
-function ExportModal({ result, onClose }: ExportModalProps) {
+function ExportModal({ rows, onClose }: ExportModalProps) {
   const [selected, setSelected] = useState<string[]>(DEFAULT_SELECTED);
 
   function toggle(id: string) {
@@ -160,7 +161,8 @@ function ExportModal({ result, onClose }: ExportModalProps) {
               Exportar planilha
             </h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Selecione as colunas que deseja incluir no arquivo CSV.
+              {rows.length} produto{rows.length !== 1 ? "s" : ""} selecionado
+              {rows.length !== 1 ? "s" : ""}. Escolha as colunas do arquivo.
             </p>
           </div>
           <button
@@ -226,10 +228,10 @@ function ExportModal({ result, onClose }: ExportModalProps) {
             </button>
             <button
               onClick={() => {
-                download(result, orderedSelected);
+                download(rows, orderedSelected);
                 onClose();
               }}
-              disabled={selected.length === 0}
+              disabled={selected.length === 0 || rows.length === 0}
               className="rounded-lg bg-brand px-4 py-1.5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
             >
               Baixar CSV
@@ -245,6 +247,33 @@ function ExportModal({ result, onClose }: ExportModalProps) {
 
 export function ResultsTable({ result }: Props) {
   const [showExportModal, setShowExportModal] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const rows = result?.rows ?? [];
+
+  // Ao gerar um novo relatório, marca todos os produtos por padrão.
+  useEffect(() => {
+    setSelectedIds(new Set(rows.map((r) => r.productId)));
+  }, [result]);
+
+  const selectedRows = useMemo(
+    () => rows.filter((r) => selectedIds.has(r.productId)),
+    [rows, selectedIds],
+  );
+
+  function toggleRow(id: string) {
+    setSelectedIds((s) => {
+      const next = new Set(s);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+  function toggleAllRows() {
+    setSelectedIds((s) =>
+      s.size === rows.length ? new Set() : new Set(rows.map((r) => r.productId)),
+    );
+  }
+  const allSelected = rows.length > 0 && selectedIds.size === rows.length;
 
   if (!result) {
     return (
@@ -255,12 +284,12 @@ export function ResultsTable({ result }: Props) {
     );
   }
 
-  const { rows, totals } = result;
+  const { totals } = result;
 
   return (
     <>
       {showExportModal && (
-        <ExportModal result={result} onClose={() => setShowExportModal(false)} />
+        <ExportModal rows={selectedRows} onClose={() => setShowExportModal(false)} />
       )}
 
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -272,10 +301,10 @@ export function ResultsTable({ result }: Props) {
           </div>
           <button
             onClick={() => setShowExportModal(true)}
-            disabled={rows.length === 0}
+            disabled={selectedRows.length === 0}
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-400 disabled:opacity-50"
           >
-            Exportar CSV
+            Exportar CSV ({formatInt(selectedRows.length)})
           </button>
         </div>
 
@@ -283,6 +312,15 @@ export function ResultsTable({ result }: Props) {
           <table className="w-full min-w-[820px] text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-400">
+                <th className="px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleAllRows}
+                    className="accent-brand"
+                    title="Marcar/desmarcar todos"
+                  />
+                </th>
                 <th className="px-4 py-3 font-medium">Produto</th>
                 <th className="px-4 py-3 font-medium">Fornecedor</th>
                 <th className="px-4 py-3 text-center font-medium">Curva</th>
@@ -299,9 +337,17 @@ export function ResultsTable({ result }: Props) {
                 <tr
                   key={r.productId}
                   className={`border-b border-slate-50 ${
-                    r.suggestedQty > 0 ? "" : "opacity-50"
+                    selectedIds.has(r.productId) ? "" : "opacity-40"
                   }`}
                 >
+                  <td className="px-3 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(r.productId)}
+                      onChange={() => toggleRow(r.productId)}
+                      className="accent-brand"
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-slate-800">{r.name}</div>
                     <div className="text-xs text-slate-400">{r.sku}</div>
