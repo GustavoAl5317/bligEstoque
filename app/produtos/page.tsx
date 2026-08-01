@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBRL, formatInt } from "@/lib/format";
 import { CURVES, type Curve } from "@/lib/bling/types";
+import { useSync } from "@/components/SyncProvider";
 
 /** "" = não classificado. */
 type CurveValue = Curve | "";
@@ -44,8 +45,7 @@ export default function ProdutosPage() {
   const [supplier, setSupplier] = useState("");
   const [onlyConsumption, setOnlyConsumption] = useState(false);
   const [page, setPage] = useState(1);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const sync = useSync();
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -65,6 +65,11 @@ export default function ProdutosPage() {
   useEffect(() => {
     loadProducts();
   }, []);
+
+  // Recarrega a lista quando uma sincronização global termina.
+  useEffect(() => {
+    if (sync.dataVersion > 0) loadProducts();
+  }, [sync.dataVersion]);
 
   const suppliers = useMemo(
     () => [...new Set(rows.map((r) => r.supplierName).filter(Boolean))].sort(),
@@ -97,28 +102,10 @@ export default function ProdutosPage() {
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const pendingCount = Object.keys(pending).length;
 
-  async function sync() {
-    setSyncing(true);
-    setSyncMsg(null);
-    try {
-      setSyncMsg("Sincronizando produtos…");
-      const r1 = await fetch("/api/bling/sync", { method: "POST" });
-      const d1 = await r1.json();
-      if (!r1.ok) throw new Error(d1.error || "Falha ao sincronizar produtos.");
-
-      setSyncMsg(`${d1.count} produtos. Sincronizando fornecedores…`);
-      const r2 = await fetch("/api/bling/sync-suppliers", { method: "POST" });
-      const d2 = await r2.json();
-      if (!r2.ok) throw new Error(d2.error || "Falha ao sincronizar fornecedores.");
-
-      setSyncMsg(`${d1.count} produtos e ${d2.count} com fornecedor atualizados.`);
-      loadProducts();
-    } catch (e) {
-      setSyncMsg(e instanceof Error ? e.message : "Falha na sincronização.");
-    } finally {
-      setSyncing(false);
-    }
-  }
+  const syncMsg =
+    sync.label === "Produtos e fornecedores" && sync.phase !== "idle"
+      ? sync.message
+      : null;
 
   async function importCurves(file: File) {
     setImporting(true);
@@ -244,11 +231,13 @@ export default function ProdutosPage() {
               {importing ? "Importando…" : "Importar curvas da planilha"}
             </button>
             <button
-              onClick={sync}
-              disabled={syncing}
+              onClick={sync.runProductSync}
+              disabled={sync.active}
               className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
             >
-              {syncing ? "Sincronizando…" : "Sincronizar com o Bling"}
+              {sync.active && sync.label === "Produtos e fornecedores"
+                ? "Sincronizando…"
+                : "Sincronizar com o Bling"}
             </button>
           </div>
           {syncMsg && <span className="text-xs text-slate-500">{syncMsg}</span>}

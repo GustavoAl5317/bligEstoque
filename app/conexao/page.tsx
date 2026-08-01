@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSync } from "@/components/SyncProvider";
 
 interface Status {
   configured: boolean;
@@ -13,10 +14,11 @@ interface Status {
 export default function ConexaoPage() {
   const [status, setStatus] = useState<Status | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [kitRunning, setKitRunning] = useState(false);
-  const [kitMsg, setKitMsg] = useState<string | null>(null);
-  const [consRunning, setConsRunning] = useState(false);
-  const [consMsg, setConsMsg] = useState<string | null>(null);
+  const sync = useSync();
+
+  // Mensagem para um card específico (só quando é a sincronização dele).
+  const msgFor = (lbl: string) =>
+    sync.label === lbl && sync.phase !== "idle" ? sync.message : null;
 
   async function load() {
     try {
@@ -41,65 +43,8 @@ export default function ConexaoPage() {
     load();
   }
 
-  // Sincroniza as composições dos kits em blocos até terminar (resumível).
-  async function runKitSync() {
-    setKitRunning(true);
-    setKitMsg("Lendo os produtos e montando os kits…");
-    try {
-      let body: object = { restart: true };
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const r = await fetch("/api/bling/sync-kits", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || "Falha ao sincronizar kits.");
-        body = {};
-        setKitMsg(
-          d.done
-            ? `Concluído! ${d.kits} kits mapeados (${d.processed} produtos lidos).`
-            : `Processando… ${d.processed} produtos lidos, ${d.kits} kits até agora.`,
-        );
-        if (d.done) break;
-      }
-    } catch (e) {
-      setKitMsg(e instanceof Error ? e.message : "Falha ao sincronizar kits.");
-    } finally {
-      setKitRunning(false);
-    }
-  }
-
-  // Calcula o consumo (vendas dos últimos 12 meses, kits decompostos) em blocos.
-  async function runConsumption() {
-    setConsRunning(true);
-    setConsMsg("Lendo as vendas dos últimos 12 meses…");
-    try {
-      let body: object = { restart: true };
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const r = await fetch("/api/bling/sync-consumption", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || "Falha no cálculo de consumo.");
-        body = {};
-        setConsMsg(
-          d.done
-            ? `Concluído! Consumo por item atualizado (${d.processed} pedidos lidos).`
-            : `Processando… ${d.processed} pedidos lidos.`,
-        );
-        if (d.done) break;
-      }
-    } catch (e) {
-      setConsMsg(e instanceof Error ? e.message : "Falha no cálculo de consumo.");
-    } finally {
-      setConsRunning(false);
-    }
-  }
+  const kitMsg = msgFor("Composição dos kits");
+  const consMsg = msgFor("Consumo por item");
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8 sm:px-6">
@@ -197,11 +142,13 @@ export default function ConexaoPage() {
               </p>
               {kitMsg && <p className="mb-3 text-sm text-slate-600">{kitMsg}</p>}
               <button
-                onClick={runKitSync}
-                disabled={kitRunning}
+                onClick={sync.runKitSync}
+                disabled={sync.active}
                 className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
               >
-                {kitRunning ? "Processando…" : "Sincronizar composição dos kits"}
+                {sync.active && sync.label === "Composição dos kits"
+                  ? "Processando…"
+                  : "Sincronizar composição dos kits"}
               </button>
             </div>
           )}
@@ -218,11 +165,13 @@ export default function ConexaoPage() {
               </p>
               {consMsg && <p className="mb-3 text-sm text-slate-600">{consMsg}</p>}
               <button
-                onClick={runConsumption}
-                disabled={consRunning}
+                onClick={sync.runConsumption}
+                disabled={sync.active}
                 className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
               >
-                {consRunning ? "Processando…" : "Calcular consumo"}
+                {sync.active && sync.label === "Consumo por item"
+                  ? "Processando…"
+                  : "Calcular consumo"}
               </button>
             </div>
           )}
