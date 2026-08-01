@@ -66,7 +66,7 @@ export default function Home() {
           curves: filters.curves,
           productSkus: filters.productSkus,
           coverageDays: filters.coverageDays === "" ? 30 : Number(filters.coverageDays),
-          coverageByCurve: filters.coverageByCurve,
+          coverageByCurve: {},
           consumptionMonths: filters.consumptionMonths,
           safetyPercent:
             filters.safetyPercent === "" ? 0 : Number(filters.safetyPercent),
