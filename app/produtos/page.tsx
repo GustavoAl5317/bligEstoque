@@ -240,6 +240,13 @@ export default function ProdutosPage() {
                 : "Sincronizar com o Bling"}
             </button>
           </div>
+          <a
+            href="/modelo-curvas.xlsx"
+            download
+            className="text-xs text-brand hover:underline"
+          >
+            Baixar modelo da planilha
+          </a>
           {syncMsg && <span className="text-xs text-slate-500">{syncMsg}</span>}
           {importMsg && <span className="text-xs text-slate-500">{importMsg}</span>}
         </div>

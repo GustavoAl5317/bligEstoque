@@ -100,6 +100,13 @@ export default function ProducaoPage() {
               </button>
             )}
           </div>
+          <a
+            href="/modelo-em-producao.xlsx"
+            download
+            className="text-xs text-brand hover:underline"
+          >
+            Baixar modelo da planilha
+          </a>
           {msg && <span className="text-xs text-slate-500">{msg}</span>}
         </div>
       </header>
@@ -107,7 +114,8 @@ export default function ProducaoPage() {
       <div className="mb-4 rounded-xl border border-brand-light/60 bg-brand-tint/50 px-4 py-3 text-sm text-slate-600">
         <b>Como montar a planilha:</b> uma coluna <b>SKU</b> (ou Código) e uma
         coluna <b>Quantidade</b> (ou “Em produção”). Cada importação substitui a
-        anterior — é uma foto do que está em produção agora.
+        anterior — é uma foto do que está em produção agora. Use o{" "}
+        <b>modelo</b> acima para começar.
       </div>
 
       {/* Resumo */}
