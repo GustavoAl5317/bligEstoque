@@ -137,6 +137,20 @@ export interface SettingsStore {
   /** Grava o consumo mensal (total vendido / meses) e devolve quantos produtos. */
   finalizeConsumption(months: number): Promise<number>;
 
+  // Consumo por item, por mês (kits já decompostos nos itens).
+  /** Zera o histórico mensal por item (início de um novo cálculo). */
+  clearMonthlyItemSales(): Promise<void>;
+  /** Soma quantidades por (sku, mês "YYYY-MM"). */
+  addMonthlyItemSales(entries: { sku: string; ym: string; qty: number }[]): Promise<void>;
+  /** Total vendido por SKU somando os meses informados (para calcular o CM da janela). */
+  getItemConsumption(yms: string[]): Promise<Record<string, number>>;
+  /** Total de saída por mês (para a aba de Análise). */
+  getMonthlyTotals(): Promise<{ ym: string; qty: number }[]>;
+  /** Itens que mais saíram na janela (yms), com o total. */
+  getTopItems(yms: string[], limit: number): Promise<{ sku: string; total: number }[]>;
+  /** Grava monthly_consumption a partir do histórico mensal (janela de N meses). */
+  finalizeItemConsumption(yms: string[]): Promise<number>;
+
   // Composições de kits (sincronizadas do Bling, em etapas).
   /** Mapa id-do-Bling → SKU (para resolver os componentes dos kits). */
   getBlingIdMap(): Promise<Record<string, string>>;
@@ -172,6 +186,7 @@ class MemoryStore implements SettingsStore {
   private snapshots: StockSnapshot[] = [];
   private kitJob: KitJob | null = null;
   private kitComponents: KitComponent[] = [];
+  private itemSales = new Map<string, number>(); // "sku|ym" -> qty
 
   async getProductCurves() {
     return Object.fromEntries(this.curves);
@@ -241,6 +256,52 @@ class MemoryStore implements SettingsStore {
     let n = 0;
     for (const [sku, qty] of this.sales) {
       this.consumption.set(sku, qty / months);
+      n++;
+    }
+    return n;
+  }
+
+  async clearMonthlyItemSales() {
+    this.itemSales.clear();
+  }
+  async addMonthlyItemSales(entries: { sku: string; ym: string; qty: number }[]) {
+    for (const e of entries) {
+      const key = `${e.sku}|${e.ym}`;
+      this.itemSales.set(key, (this.itemSales.get(key) ?? 0) + e.qty);
+    }
+  }
+  async getItemConsumption(yms: string[]) {
+    const set = new Set(yms);
+    const out: Record<string, number> = {};
+    for (const [key, qty] of this.itemSales) {
+      const [sku, ym] = key.split("|");
+      if (set.has(ym)) out[sku] = (out[sku] ?? 0) + qty;
+    }
+    return out;
+  }
+  async getMonthlyTotals() {
+    const byYm = new Map<string, number>();
+    for (const [key, qty] of this.itemSales) {
+      const ym = key.split("|")[1];
+      byYm.set(ym, (byYm.get(ym) ?? 0) + qty);
+    }
+    return [...byYm.entries()]
+      .map(([ym, qty]) => ({ ym, qty }))
+      .sort((a, b) => a.ym.localeCompare(b.ym));
+  }
+  async getTopItems(yms: string[], limit: number) {
+    const totals = await this.getItemConsumption(yms);
+    return Object.entries(totals)
+      .map(([sku, total]) => ({ sku, total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, limit);
+  }
+  async finalizeItemConsumption(yms: string[]) {
+    const totals = await this.getItemConsumption(yms);
+    const months = Math.max(1, yms.length);
+    let n = 0;
+    for (const [sku, total] of Object.entries(totals)) {
+      this.consumption.set(sku, total / months);
       n++;
     }
     return n;
@@ -430,6 +491,12 @@ async function ensureSchema(url: string): Promise<void> {
           component_sku text not null,
           qty numeric not null default 1,
           primary key (kit_sku, component_sku)
+        )`;
+        await sql`create table if not exists monthly_item_sales (
+          sku text not null,
+          ym text not null,
+          qty numeric not null default 0,
+          primary key (sku, ym)
         )`;
         await sql`create table if not exists kit_job (
           id text primary key default 'current',
@@ -740,6 +807,66 @@ class PostgresStore implements SettingsStore {
         select cs.sku, cs.qty / ${months}, now()
           from consumption_sales cs
           join product_cache pc on pc.sku = cs.sku
+        on conflict (sku) do update set cm = excluded.cm, updated_at = now()`;
+      return res.count;
+    });
+  }
+
+  async clearMonthlyItemSales() {
+    await this.run((sql) => sql`truncate table monthly_item_sales`);
+  }
+
+  async addMonthlyItemSales(entries: { sku: string; ym: string; qty: number }[]) {
+    if (entries.length === 0) return;
+    await this.run(async (sql) => {
+      const CHUNK = 500;
+      for (let i = 0; i < entries.length; i += CHUNK) {
+        const slice = entries.slice(i, i + CHUNK);
+        await sql`insert into monthly_item_sales ${sql(slice, "sku", "ym", "qty")}
+          on conflict (sku, ym) do update set qty = monthly_item_sales.qty + excluded.qty`;
+      }
+    });
+  }
+
+  getItemConsumption(yms: string[]) {
+    if (yms.length === 0) return Promise.resolve({} as Record<string, number>);
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ sku: string; total: number }[]>`
+        select sku, sum(qty) as total from monthly_item_sales
+        where ym in ${sql(yms)} group by sku`;
+      return Object.fromEntries(rows.map((r) => [r.sku, Number(r.total)]));
+    }, {} as Record<string, number>);
+  }
+
+  getMonthlyTotals() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ ym: string; qty: number }[]>`
+        select ym, sum(qty) as qty from monthly_item_sales group by ym order by ym`;
+      return rows.map((r) => ({ ym: r.ym, qty: Number(r.qty) }));
+    }, [] as { ym: string; qty: number }[]);
+  }
+
+  getTopItems(yms: string[], limit: number) {
+    if (yms.length === 0) return Promise.resolve([] as { sku: string; total: number }[]);
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ sku: string; total: number }[]>`
+        select sku, sum(qty) as total from monthly_item_sales
+        where ym in ${sql(yms)} group by sku order by total desc limit ${limit}`;
+      return rows.map((r) => ({ sku: r.sku, total: Number(r.total) }));
+    }, [] as { sku: string; total: number }[]);
+  }
+
+  async finalizeItemConsumption(yms: string[]) {
+    if (yms.length === 0) return 0;
+    const months = Math.max(1, yms.length);
+    return this.run(async (sql) => {
+      const res = await sql`
+        insert into monthly_consumption (sku, cm, updated_at)
+        select mis.sku, sum(mis.qty) / ${months}, now()
+          from monthly_item_sales mis
+          join product_cache pc on pc.sku = mis.sku
+         where mis.ym in ${sql(yms)}
+         group by mis.sku
         on conflict (sku) do update set cm = excluded.cm, updated_at = now()`;
       return res.count;
     });

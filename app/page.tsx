@@ -23,6 +23,7 @@ const initialFilters: FilterState = {
   productSkus: [],
   coverageDays: 30,
   coverageByCurve: { ...DEFAULT_COVERAGE_BY_CURVE },
+  consumptionMonths: 6,
   safetyPercent: "",
   leadTimeOverrideDays: 30,
 };
@@ -66,6 +67,7 @@ export default function Home() {
           productSkus: filters.productSkus,
           coverageDays: filters.coverageDays === "" ? 30 : Number(filters.coverageDays),
           coverageByCurve: filters.coverageByCurve,
+          consumptionMonths: filters.consumptionMonths,
           safetyPercent:
             filters.safetyPercent === "" ? 0 : Number(filters.safetyPercent),
           leadTimeOverrideDays:

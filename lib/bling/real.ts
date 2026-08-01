@@ -34,6 +34,18 @@ function str(v: unknown, fallback = ""): string {
   return v == null ? fallback : String(v);
 }
 
+/** Últimos `n` meses como "YYYY-MM" (do mais recente para o mais antigo). */
+export function lastYms(n: number): string[] {
+  const out: string[] = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = 0; i < n; i++) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+}
+
 export class BlingApiDataSource implements BlingDataSource {
   readonly source = "bling" as const;
 
@@ -262,11 +274,6 @@ export class BlingApiDataSource implements BlingDataSource {
     );
 
     await getStore().replaceProductCache(unique);
-
-    // Tira a foto do estoque hoje para cálculo de consumo e já atualiza o consumo médio
-    await this.saveStockSnapshot();
-    await this.calcConsumptionFromSnapshots();
-
     return unique.length;
   }
 
@@ -399,7 +406,114 @@ export class BlingApiDataSource implements BlingDataSource {
     return { done, processed, kits };
   }
 
-  // ---- Consumo mensal por snapshots de estoque ----
+  // ---- Consumo por item (vendas com kits decompostos), por mês ----
+
+  /** Inicia o cálculo: janela dos últimos `months` meses (padrão 12). */
+  async startConsumptionCalc(months = 12): Promise<void> {
+    const end = new Date();
+    const start = new Date();
+    start.setMonth(start.getMonth() - months);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const store = getStore();
+    await store.clearMonthlyItemSales();
+    await store.startConsumptionJob({
+      periodStart: fmt(start),
+      periodEnd: fmt(end),
+      months,
+      nextPage: 1,
+      processed: 0,
+      done: false,
+    });
+  }
+
+  /**
+   * Processa UMA página de pedidos de venda: acha o mês de cada pedido, busca os
+   * itens (em lotes, respeitando 3/s), e soma por (item, mês) — decompondo os
+   * KITS nos seus componentes. No fim, grava o consumo médio (janela de 6 meses).
+   */
+  async processConsumptionChunk(): Promise<{
+    done: boolean;
+    processed: number;
+    cmCount?: number;
+  }> {
+    const store = getStore();
+    const job = await store.getConsumptionJob();
+    if (!job) throw new Error("Nenhum cálculo em andamento.");
+    if (job.done) return { done: true, processed: job.processed };
+
+    const kits = await store.getKitComponents(); // kit_sku -> componentes
+
+    const period = `dataInicial=${job.periodStart}&dataFinal=${job.periodEnd}`;
+    const list = await this.get<{ data?: Json[] }>(
+      `/pedidos/vendas?limite=${PAGE_LIMIT}&pagina=${job.nextPage}&${period}`,
+    );
+    const orders = list.data ?? [];
+
+    // Pedidos válidos (ignora cancelados, situacao 12) e o mês de cada um.
+    const ymById = new Map<string, string>();
+    for (const o of orders) {
+      if (Number((o.situacao as Json)?.id) === 12) continue;
+      const id = str(o.id);
+      const ym = str(o.data).slice(0, 7); // "YYYY-MM"
+      if (id && ym) ymById.set(id, ym);
+    }
+    const ids = [...ymById.keys()];
+
+    const acc = new Map<string, number>(); // "sku|ym" -> qty
+    const add = (sku: string, ym: string, qty: number) => {
+      const k = `${sku}|${ym}`;
+      acc.set(k, (acc.get(k) ?? 0) + qty);
+    };
+
+    for (let i = 0; i < ids.length; i += 3) {
+      const batch = ids.slice(i, i + 3);
+      const started = Date.now();
+      const details = await Promise.all(
+        batch.map((id) =>
+          this.get<{ data?: { itens?: Json[] } }>(`/pedidos/vendas/${id}`).catch(
+            () => ({ data: { itens: [] } }),
+          ),
+        ),
+      );
+      details.forEach((d, idx) => {
+        const ym = ymById.get(batch[idx]) ?? "";
+        if (!ym) return;
+        for (const it of d.data?.itens ?? []) {
+          const sku = str(it.codigo);
+          const q = num(it.quantidade);
+          if (!sku || q <= 0) continue;
+          const comps = kits[sku];
+          if (comps && comps.length > 0) {
+            // KIT: o consumo vai para os itens que o formam (não para o kit).
+            for (const c of comps) add(c.sku, ym, q * c.qty);
+          } else {
+            add(sku, ym, q);
+          }
+        }
+      });
+      const elapsed = Date.now() - started;
+      if (i + 3 < ids.length && elapsed < 1100) await sleep(1100 - elapsed);
+    }
+
+    await store.addMonthlyItemSales(
+      [...acc.entries()].map(([k, qty]) => {
+        const [sku, ym] = k.split("|");
+        return { sku, ym, qty };
+      }),
+    );
+
+    const processed = job.processed + orders.length;
+    const done = orders.length < PAGE_LIMIT;
+    await store.saveConsumptionProgress(job.nextPage + 1, processed, done);
+
+    if (done) {
+      const cmCount = await store.finalizeItemConsumption(lastYms(6));
+      return { done: true, processed, cmCount };
+    }
+    return { done: false, processed };
+  }
+
+  // ---- Consumo mensal por snapshots de estoque (legado, não usado) ----
 
   /**
    * Tira uma "foto" do estoque atual (lido do cache) e salva como snapshot.

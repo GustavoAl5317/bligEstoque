@@ -13,6 +13,8 @@ export interface FilterState {
   coverageDays: number | "";
   /** Cobertura (dias) por curva — ex.: A=60, AB=45, B=30. */
   coverageByCurve: Record<string, number>;
+  /** Período do consumo: 1 (mês atual), 3, 6 ou 12 meses. */
+  consumptionMonths: number;
   /** Fator de segurança em % (opcional). Vazio = sem folga. */
   safetyPercent: number | "";
   /** Vazio = usa o prazo do fornecedor. */
@@ -121,6 +123,40 @@ export function FilterForm({
           <p className="mt-1.5 text-xs text-slate-400">
             Deixe vazio para incluir todos. Escolha aqui se quiser um relatório só
             de alguns produtos.
+          </p>
+        </div>
+
+        {/* Período do consumo */}
+        <div className="md:col-span-2">
+          <label className="mb-1.5 block text-sm font-medium text-slate-700">
+            Período do consumo
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { v: 1, label: "Mês atual" },
+              { v: 3, label: "Últimos 3 meses" },
+              { v: 6, label: "Últimos 6 meses" },
+              { v: 12, label: "Últimos 12 meses" },
+            ].map((opt) => {
+              const active = value.consumptionMonths === opt.v;
+              return (
+                <button
+                  key={opt.v}
+                  type="button"
+                  onClick={() => onChange({ ...value, consumptionMonths: opt.v })}
+                  className={`rounded-lg border px-3 py-1.5 text-sm transition ${
+                    active
+                      ? "border-brand bg-brand text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 text-xs text-slate-400">
+            Sobre quantos meses calcular a média de consumo de cada item.
           </p>
         </div>
 

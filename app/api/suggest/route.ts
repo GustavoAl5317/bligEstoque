@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDataSource } from "@/lib/bling/client";
+import { getStore } from "@/lib/db/store";
+import { lastYms } from "@/lib/bling/real";
 import { calcReplenishment, type CalcFilters } from "@/lib/calc/replenishment";
 
 // Recebe os filtros, roda o motor de cálculo e devolve as sugestões de compra.
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as Partial<CalcFilters>;
+  const body = (await req.json()) as Partial<CalcFilters> & {
+    consumptionMonths?: number;
+  };
+
+  // Período do consumo escolhido no relatório (mês atual=1, 3, 6, 12).
+  const monthsRaw = Number(body.consumptionMonths);
+  const consumptionMonths = [1, 3, 6, 12].includes(monthsRaw) ? monthsRaw : 6;
 
   const coverageByCurve: Record<string, number> = {};
   if (body.coverageByCurve && typeof body.coverageByCurve === "object") {
@@ -28,11 +36,22 @@ export async function POST(req: NextRequest) {
   };
 
   const ds = await getDataSource();
-  const [suppliers, products] = await Promise.all([
+  const [suppliers, products, windowConsumption] = await Promise.all([
     ds.listSuppliers(),
     ds.listProducts(),
+    getStore().getItemConsumption(lastYms(consumptionMonths)),
   ]);
 
-  const result = calcReplenishment(products, suppliers, filters);
+  // Substitui o consumo pelo da janela escolhida (CM = total vendido ÷ meses),
+  // já com kits decompostos. Se não houver histórico, mantém o consumo salvo.
+  const hasWindow = Object.keys(windowConsumption).length > 0;
+  const adjusted = hasWindow
+    ? products.map((p) => ({
+        ...p,
+        monthlyConsumption: (windowConsumption[p.sku] ?? 0) / consumptionMonths,
+      }))
+    : products;
+
+  const result = calcReplenishment(adjusted, suppliers, filters);
   return NextResponse.json(result);
 }

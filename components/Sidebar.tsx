@@ -26,6 +26,19 @@ const links = [
     ),
   },
   {
+    href: "/analise",
+    label: "Análise",
+    desc: "Saída por mês",
+    icon: (
+      <path
+        d="M4 20V10M10 20V4M16 20v-7M20 20H3"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+  {
     href: "/producao",
     label: "Em produção",
     desc: "Somar ao estoque",
