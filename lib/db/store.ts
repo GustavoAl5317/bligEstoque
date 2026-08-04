@@ -818,10 +818,22 @@ class PostgresStore implements SettingsStore {
 
   async addMonthlyItemSales(entries: { sku: string; ym: string; qty: number }[]) {
     if (entries.length === 0) return;
+    // Junta pares (sku, mes) repetidos SOMANDO a quantidade. O mesmo item
+    // vendido em dois pedidos no mesmo mes geraria duas linhas iguais e o
+    // Postgres reclamaria "ON CONFLICT DO UPDATE command cannot affect row a
+    // second time".
+    const merged = new Map<string, { sku: string; ym: string; qty: number }>();
+    for (const e of entries) {
+      const key = `${e.sku} ${e.ym}`;
+      const cur = merged.get(key);
+      if (cur) cur.qty += e.qty;
+      else merged.set(key, { ...e });
+    }
+    const deduped = [...merged.values()];
     await this.run(async (sql) => {
       const CHUNK = 500;
-      for (let i = 0; i < entries.length; i += CHUNK) {
-        const slice = entries.slice(i, i + CHUNK);
+      for (let i = 0; i < deduped.length; i += CHUNK) {
+        const slice = deduped.slice(i, i + CHUNK);
         await sql`insert into monthly_item_sales ${sql(slice, "sku", "ym", "qty")}
           on conflict (sku, ym) do update set qty = monthly_item_sales.qty + excluded.qty`;
       }
@@ -915,10 +927,22 @@ class PostgresStore implements SettingsStore {
 
   async addKitComponents(rows: KitComponent[]) {
     if (rows.length === 0) return;
+    // Junta pares (kit, componente) repetidos SOMANDO a quantidade. Sem isso,
+    // um componente listado 2x (ou 2 ids do Bling que caem no mesmo SKU) faria
+    // o Postgres reclamar "ON CONFLICT DO UPDATE command cannot affect row a
+    // second time" e o bloco inteiro viraria 500.
+    const merged = new Map<string, KitComponent>();
+    for (const r of rows) {
+      const key = `${r.kitSku} ${r.componentSku}`;
+      const cur = merged.get(key);
+      if (cur) cur.qty += r.qty;
+      else merged.set(key, { ...r });
+    }
+    const deduped = [...merged.values()];
     await this.run(async (sql) => {
       const CHUNK = 500;
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        const slice = rows.slice(i, i + CHUNK).map((r) => ({
+      for (let i = 0; i < deduped.length; i += CHUNK) {
+        const slice = deduped.slice(i, i + CHUNK).map((r) => ({
           kit_sku: r.kitSku,
           component_sku: r.componentSku,
           qty: r.qty,
