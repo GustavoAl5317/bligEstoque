@@ -79,6 +79,8 @@ export interface ConsumptionJob {
   nextPage: number;
   processed: number;
   done: boolean;
+  /** Quando o job foi atualizado pela última vez (ISO). */
+  updatedAt?: string;
 }
 
 /** Snapshot de saldo de estoque (para calcular consumo real). */
@@ -94,6 +96,8 @@ export interface KitJob {
   processed: number;
   kits: number;
   done: boolean;
+  /** Quando o job foi atualizado pela última vez (ISO). */
+  updatedAt?: string;
 }
 
 /** Ligação kit → componente (item que forma o kit). */
@@ -748,8 +752,9 @@ class PostgresStore implements SettingsStore {
           next_page: number;
           processed: number;
           done: boolean;
+          updated_at: string;
         }[]
-      >`select period_start, period_end, months, next_page, processed, done
+      >`select period_start, period_end, months, next_page, processed, done, updated_at
           from consumption_job where id = 'current'`;
       if (rows.length === 0) return null;
       const r = rows[0];
@@ -760,6 +765,7 @@ class PostgresStore implements SettingsStore {
         nextPage: r.next_page,
         processed: r.processed,
         done: r.done,
+        updatedAt: new Date(r.updated_at).toISOString(),
       };
     }, null as ConsumptionJob | null);
   }
@@ -901,8 +907,14 @@ class PostgresStore implements SettingsStore {
   async getKitJob() {
     return this.safeRead(async (sql) => {
       const rows = await sql<
-        { next_page: number; processed: number; kits: number; done: boolean }[]
-      >`select next_page, processed, kits, done from kit_job where id = 'current'`;
+        {
+          next_page: number;
+          processed: number;
+          kits: number;
+          done: boolean;
+          updated_at: string;
+        }[]
+      >`select next_page, processed, kits, done, updated_at from kit_job where id = 'current'`;
       if (rows.length === 0) return null;
       const r = rows[0];
       return {
@@ -910,6 +922,7 @@ class PostgresStore implements SettingsStore {
         processed: r.processed,
         kits: r.kits,
         done: r.done,
+        updatedAt: new Date(r.updated_at).toISOString(),
       };
     }, null as KitJob | null);
   }

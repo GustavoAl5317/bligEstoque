@@ -1,7 +1,57 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSync } from "@/components/SyncProvider";
+import { useSync, type JobStatus } from "@/components/SyncProvider";
+
+/** Formata uma data ISO como "04/08/2026 às 09:41". */
+function fmtDateTime(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Linha de status de uma etapa (kits ou consumo). */
+function StatusLine({
+  job,
+  running,
+  unit,
+}: {
+  job: JobStatus | null;
+  running: boolean;
+  unit: string; // "kits" | "pedidos"
+}) {
+  if (running) return null; // o indicador de progresso já mostra
+  if (!job) {
+    return (
+      <p className="mb-3 inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm text-slate-500">
+        <span>○</span> Nunca sincronizado.
+      </p>
+    );
+  }
+  const when = fmtDateTime(job.updatedAt);
+  if (job.done) {
+    const count = unit === "kits" ? job.kits ?? 0 : job.processed;
+    return (
+      <p className="mb-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5 text-sm text-emerald-700">
+        <span>✓</span> Concluído — {count} {unit}
+        {when && ` · última vez em ${when}`}.
+      </p>
+    );
+  }
+  return (
+    <p className="mb-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-1.5 text-sm text-amber-800">
+      <span>⏸</span> Pausado em {job.processed} {unit}
+      {when && ` · parou em ${when}`}. Clique em “Continuar” para terminar.
+    </p>
+  );
+}
 
 interface Status {
   configured: boolean;
@@ -140,11 +190,13 @@ export default function ConexaoPage() {
                 não para o kit. É um processo pesado (~alguns minutos): rode{" "}
                 <b>1x</b> e sempre que criar novos kits.
               </p>
-              {sync.pausedKits !== null && !sync.active && (
-                <p className="mb-3 text-sm text-amber-700">
-                  Pausado em {sync.pausedKits} produtos. Continue para terminar.
-                </p>
-              )}
+              <div>
+                <StatusLine
+                  job={sync.kitJob}
+                  running={sync.active && sync.label === "Composição dos kits"}
+                  unit="kits"
+                />
+              </div>
               {kitMsg && <p className="mb-3 text-sm text-slate-600">{kitMsg}</p>}
               <div className="flex flex-wrap gap-2">
                 {sync.pausedKits !== null && !sync.active && (
@@ -190,11 +242,13 @@ export default function ConexaoPage() {
                   dos kits não vai para os itens.
                 </p>
               )}
-              {sync.pausedConsumption !== null && !sync.active && (
-                <p className="mb-3 text-sm text-amber-700">
-                  Pausado em {sync.pausedConsumption} pedidos.
-                </p>
-              )}
+              <div>
+                <StatusLine
+                  job={sync.consumptionJob}
+                  running={sync.active && sync.label === "Consumo por item"}
+                  unit="pedidos"
+                />
+              </div>
               {consMsg && <p className="mb-3 text-sm text-slate-600">{consMsg}</p>}
               <div className="flex flex-wrap gap-2">
                 {sync.pausedConsumption !== null && !sync.active && (

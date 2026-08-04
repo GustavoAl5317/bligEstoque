@@ -11,6 +11,16 @@ import {
 
 type Phase = "idle" | "running" | "done" | "error";
 
+/** Status de um job (kits ou consumo), lido do servidor. */
+export interface JobStatus {
+  done: boolean;
+  processed: number;
+  /** Só para kits: quantos kits mapeados. */
+  kits?: number;
+  /** Quando rodou pela última vez (ISO). */
+  updatedAt?: string;
+}
+
 interface SyncContextValue {
   phase: Phase;
   /** O que está sincronizando (ex.: "Composição dos kits"). */
@@ -24,6 +34,9 @@ interface SyncContextValue {
   /** Se há um cálculo PAUSADO (interrompido antes de terminar). null = não. */
   pausedKits: number | null;
   pausedConsumption: number | null;
+  /** Status completo de cada job (null = nunca rodou). */
+  kitJob: JobStatus | null;
+  consumptionJob: JobStatus | null;
   runProductSync: () => Promise<void>;
   runKitSync: () => Promise<void>;
   runConsumption: () => Promise<void>;
@@ -46,9 +59,11 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [dataVersion, setDataVersion] = useState(0);
   const [pausedKits, setPausedKits] = useState<number | null>(null);
   const [pausedConsumption, setPausedConsumption] = useState<number | null>(null);
+  const [kitJob, setKitJob] = useState<JobStatus | null>(null);
+  const [consumptionJob, setConsumptionJob] = useState<JobStatus | null>(null);
   const running = useRef(false);
 
-  // Verifica (ao abrir e após cada sync) se algum cálculo ficou pausado no meio.
+  // Verifica (ao abrir e após cada sync) o status de cada job.
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -58,6 +73,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           fetch("/api/bling/sync-consumption").then((r) => r.json()).catch(() => ({})),
         ]);
         if (cancel) return;
+        setKitJob(k?.job ?? null);
+        setConsumptionJob(c?.job ?? null);
         setPausedKits(k?.job && !k.job.done ? k.job.processed ?? 0 : null);
         setPausedConsumption(c?.job && !c.job.done ? c.job.processed ?? 0 : null);
       } catch {
@@ -167,6 +184,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         dataVersion,
         pausedKits,
         pausedConsumption,
+        kitJob,
+        consumptionJob,
         runProductSync,
         runKitSync,
         runConsumption,
