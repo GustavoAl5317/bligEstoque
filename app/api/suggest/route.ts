@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     coverageDays: Number(body.coverageDays) || 30,
     coverageByCurve,
     safetyPercent: Number(body.safetyPercent) || 0,
+    includeProduction: body.includeProduction !== false, // padrão: considerar
     leadTimeOverrideDays:
       body.leadTimeOverrideDays != null && Number(body.leadTimeOverrideDays) > 0
         ? Number(body.leadTimeOverrideDays)

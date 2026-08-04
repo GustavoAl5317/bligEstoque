@@ -21,6 +21,8 @@ export interface CalcFilters {
   coverageByCurve?: Record<string, number>;
   /** Fator de segurança em %, aplicado sobre a demanda de cobertura. 0/vazio = sem folga. */
   safetyPercent: number;
+  /** Somar o "em produção" ao estoque. Padrão: true. */
+  includeProduction?: boolean;
   /** Override opcional do prazo de produção (dias). Vazio = usa o do fornecedor. */
   leadTimeOverrideDays?: number | null;
 }
@@ -91,8 +93,10 @@ function calcProduct(
   const coverageDays =
     (product.curve && filters.coverageByCurve?.[product.curve]) ??
     filters.coverageDays;
-  // Estoque final = estoque do dia + o que está em produção no fornecedor.
-  const effectiveStock = product.stock + (product.inProduction ?? 0);
+  // Estoque final = estoque do dia + o que está em produção (se ligado no filtro).
+  const includeProd = filters.includeProduction !== false;
+  const effectiveStock =
+    product.stock + (includeProd ? product.inProduction ?? 0 : 0);
   const stockAtArrival = Math.max(0, effectiveStock - dailyDemand * leadTimeDays);
   const coverageDemand = dailyDemand * coverageDays;
   // Fator de segurança: % de folga sobre a demanda de cobertura (opcional).

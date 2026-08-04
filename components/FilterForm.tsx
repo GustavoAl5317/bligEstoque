@@ -17,6 +17,8 @@ export interface FilterState {
   consumptionMonths: number;
   /** Fator de segurança em % (opcional). Vazio = sem folga. */
   safetyPercent: number | "";
+  /** Considerar o que está "em produção" (soma ao estoque no cálculo). */
+  includeProduction: boolean;
   /** Vazio = usa o prazo do fornecedor. */
   leadTimeOverrideDays: number | "";
 }
@@ -208,7 +210,7 @@ export function FilterForm({
         </div>
 
         {/* Fator de segurança — % opcional */}
-        <div className="md:col-span-2">
+        <div>
           <label className="mb-1.5 block text-sm font-medium text-slate-700">
             Fator de segurança (%) — opcional
           </label>
@@ -232,6 +234,39 @@ export function FilterForm({
           <p className="mt-1.5 text-xs text-slate-400">
             Compra um pouco a mais para não faltar. Ex.: 10% = 10% acima do necessário.
             Deixe vazio para não usar.
+          </p>
+        </div>
+
+        {/* Considerar "em produção" — liga/desliga */}
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-slate-700">
+            Considerar produtos em produção
+          </label>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={value.includeProduction}
+              onClick={() =>
+                onChange({ ...value, includeProduction: !value.includeProduction })
+              }
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+                value.includeProduction ? "bg-brand" : "bg-slate-300"
+              }`}
+            >
+              <span
+                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                  value.includeProduction ? "translate-x-5" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+            <span className="text-sm text-slate-600">
+              {value.includeProduction ? "Ligado" : "Desligado"}
+            </span>
+          </div>
+          <p className="mt-1.5 text-xs text-slate-400">
+            Ligado: soma o que está em produção ao estoque. Desligue se você já lança a
+            produção no Bling (para não contar duas vezes).
           </p>
         </div>
       </div>
