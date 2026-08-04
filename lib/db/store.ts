@@ -150,6 +150,8 @@ export interface SettingsStore {
   getItemConsumption(yms: string[]): Promise<Record<string, number>>;
   /** Total de saída por mês (para a aba de Análise). */
   getMonthlyTotals(): Promise<{ ym: string; qty: number }[]>;
+  /** Consumo mês a mês de UM item (para diagnóstico). */
+  getItemMonthlySeries(sku: string): Promise<{ ym: string; qty: number }[]>;
   /** Itens que mais saíram na janela (yms), com o total. */
   getTopItems(yms: string[], limit: number): Promise<{ sku: string; total: number }[]>;
   /** Grava monthly_consumption a partir do histórico mensal (janela de N meses). */
@@ -292,6 +294,14 @@ class MemoryStore implements SettingsStore {
     return [...byYm.entries()]
       .map(([ym, qty]) => ({ ym, qty }))
       .sort((a, b) => a.ym.localeCompare(b.ym));
+  }
+  async getItemMonthlySeries(sku: string) {
+    const out: { ym: string; qty: number }[] = [];
+    for (const [key, qty] of this.itemSales) {
+      const [s, ym] = key.split("|");
+      if (s === sku) out.push({ ym, qty });
+    }
+    return out.sort((a, b) => a.ym.localeCompare(b.ym));
   }
   async getTopItems(yms: string[], limit: number) {
     const totals = await this.getItemConsumption(yms);
@@ -860,6 +870,14 @@ class PostgresStore implements SettingsStore {
     return this.safeRead(async (sql) => {
       const rows = await sql<{ ym: string; qty: number }[]>`
         select ym, sum(qty) as qty from monthly_item_sales group by ym order by ym`;
+      return rows.map((r) => ({ ym: r.ym, qty: Number(r.qty) }));
+    }, [] as { ym: string; qty: number }[]);
+  }
+
+  getItemMonthlySeries(sku: string) {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ ym: string; qty: number }[]>`
+        select ym, qty from monthly_item_sales where sku = ${sku} order by ym`;
       return rows.map((r) => ({ ym: r.ym, qty: Number(r.qty) }));
     }, [] as { ym: string; qty: number }[]);
   }
