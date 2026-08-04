@@ -1,20 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/db/store";
+import { lastYms } from "@/lib/bling/real";
 
 // Diagnóstico do estado do consumo/kits.
 // Abra /api/bling/diag (ou ?sku=CODIGO para checar um produto específico).
 export async function GET(req: NextRequest) {
   const store = getStore();
-  const [kits, kitJob, consJob, months] = await Promise.all([
+  const sku = req.nextUrl.searchParams.get("sku") ?? undefined;
+
+  const [kits, kitJob, consJob, months, itemCons, listingCm] = await Promise.all([
     store.getKitComponents(),
     store.getKitJob(),
     store.getConsumptionJob(),
     store.getMonthlyTotals(),
+    // Consumo que o RELATÓRIO usa (vendas por item, kits decompostos).
+    store.getItemConsumption(lastYms(12)),
+    // Consumo que a tela PRODUTOS E CURVAS usa (monthly_consumption.cm).
+    store.getMonthlyConsumption(),
   ]);
 
-  const sku = req.nextUrl.searchParams.get("sku") ?? undefined;
   const skuInfo = sku
-    ? { sku, ehKit: Boolean(kits[sku]), componentes: kits[sku] ?? [] }
+    ? {
+        sku,
+        ehKit: Boolean(kits[sku]),
+        componentes: kits[sku] ?? [],
+        // Se ehKit=true e estes vierem > 0, o consumo NÃO zerou como deveria.
+        consumo_no_relatorio_12m: itemCons[sku] ?? 0,
+        consumo_na_tela_curvas_cm: listingCm[sku] ?? 0,
+      }
     : null;
 
   return NextResponse.json({
