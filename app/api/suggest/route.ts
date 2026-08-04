@@ -8,6 +8,7 @@ import { calcReplenishment, type CalcFilters } from "@/lib/calc/replenishment";
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as Partial<CalcFilters> & {
     consumptionMonths?: number;
+    showKits?: boolean;
   };
 
   // Período do consumo escolhido no relatório (mês atual=1, 3, 6, 12).
@@ -37,10 +38,11 @@ export async function POST(req: NextRequest) {
   };
 
   const ds = await getDataSource();
-  const [suppliers, products, windowConsumption] = await Promise.all([
+  const [suppliers, products, windowConsumption, kitMap] = await Promise.all([
     ds.listSuppliers(),
     ds.listProducts(),
     getStore().getItemConsumption(lastYms(consumptionMonths)),
+    getStore().getKitComponents(),
   ]);
 
   // Substitui o consumo pelo da janela escolhida (CM = total vendido ÷ meses),
@@ -53,6 +55,15 @@ export async function POST(req: NextRequest) {
       }))
     : products;
 
-  const result = calcReplenishment(adjusted, suppliers, filters);
+  // Para reposição, kits (produtos com composição) só atrapalham: não se compra
+  // o kit, e sim os itens que o formam. Por padrão escondemos os kits e mostramos
+  // só os produtos unitários. showKits=true traz os kits de volta.
+  const kitSkus = new Set(Object.keys(kitMap));
+  const visible =
+    body.showKits === true || kitSkus.size === 0
+      ? adjusted
+      : adjusted.filter((p) => !kitSkus.has(p.sku));
+
+  const result = calcReplenishment(visible, suppliers, filters);
   return NextResponse.json(result);
 }

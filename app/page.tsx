@@ -26,6 +26,7 @@ const initialFilters: FilterState = {
   consumptionMonths: 6,
   safetyPercent: "",
   includeProduction: true,
+  showKits: false,
   leadTimeOverrideDays: 30,
 };
 
@@ -70,6 +71,7 @@ export default function Home() {
           coverageByCurve: {},
           consumptionMonths: filters.consumptionMonths,
           includeProduction: filters.includeProduction,
+          showKits: filters.showKits,
           safetyPercent:
             filters.safetyPercent === "" ? 0 : Number(filters.safetyPercent),
           leadTimeOverrideDays:

@@ -19,6 +19,8 @@ export interface FilterState {
   safetyPercent: number | "";
   /** Considerar o que está "em produção" (soma ao estoque no cálculo). */
   includeProduction: boolean;
+  /** Mostrar kits (produtos com composição). Padrão: escondidos na reposição. */
+  showKits: boolean;
   /** Vazio = usa o prazo do fornecedor. */
   leadTimeOverrideDays: number | "";
 }
@@ -267,6 +269,37 @@ export function FilterForm({
           <p className="mt-1.5 text-xs text-slate-400">
             Ligado: soma o que está em produção ao estoque. Desligue se você já lança a
             produção no Bling (para não contar duas vezes).
+          </p>
+        </div>
+
+        {/* Mostrar kits — liga/desliga (padrão: escondidos) */}
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-slate-700">
+            Mostrar kits (produtos com composição)
+          </label>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={value.showKits}
+              onClick={() => onChange({ ...value, showKits: !value.showKits })}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+                value.showKits ? "bg-brand" : "bg-slate-300"
+              }`}
+            >
+              <span
+                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                  value.showKits ? "translate-x-5" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+            <span className="text-sm text-slate-600">
+              {value.showKits ? "Mostrando kits" : "Escondidos"}
+            </span>
+          </div>
+          <p className="mt-1.5 text-xs text-slate-400">
+            Desligado (recomendado): mostra só produtos unitários. Kit não se compra —
+            você compra os itens que o formam.
           </p>
         </div>
       </div>
