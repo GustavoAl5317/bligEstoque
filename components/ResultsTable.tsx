@@ -54,7 +54,8 @@ const ALL_COLUMNS: ColDef[] = [
   {
     id: "consumption",
     label: "Consumo mensal",
-    value: (r) => String(r.monthlyConsumption),
+    // 2 casas + vírgula, senão o Excel (pt-BR) lê o ponto como milhar e embola.
+    value: (r) => r.monthlyConsumption.toFixed(2).replace(".", ","),
   },
   {
     id: "markup",
