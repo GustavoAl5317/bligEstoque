@@ -68,6 +68,15 @@ export function MultiSelect({
     onChange([...set]);
   }
 
+  /** Marca todos os itens que estão no filtro atual (soma à seleção existente). */
+  function selectAllFiltered() {
+    const set = new Set(selected);
+    for (const o of filtered) set.add(o.id);
+    onChange([...set]);
+  }
+
+  const hasQuery = q.trim() !== "";
+
   const summary =
     selected.length === 0
       ? allLabel
@@ -110,6 +119,29 @@ export function MultiSelect({
                 placeholder={placeholder}
                 className="w-full rounded-md border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-brand"
               />
+            </div>
+          )}
+
+          {filtered.length > 0 && (
+            <div className="flex items-center justify-between border-b border-slate-100 px-3 py-1.5">
+              <button
+                type="button"
+                onClick={selectAllFiltered}
+                className="text-xs font-medium text-brand hover:underline"
+              >
+                {hasQuery
+                  ? `Selecionar todos (${filtered.length})`
+                  : "Selecionar todos"}
+              </button>
+              {selected.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onChange([])}
+                  className="text-xs text-slate-500 hover:underline"
+                >
+                  Limpar seleção
+                </button>
+              )}
             </div>
           )}
 
