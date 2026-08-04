@@ -3,8 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { formatInt } from "@/lib/format";
 
+interface WebhookStatus {
+  products: number;
+  totalExits: number;
+  lastAt: string | null;
+}
+
 export default function ConsumoPage() {
   const [count, setCount] = useState<number | null>(null);
+  const [webhook, setWebhook] = useState<WebhookStatus | null>(null);
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -14,11 +21,20 @@ export default function ConsumoPage() {
       .then((r) => r.json())
       .then((d) => setCount(d.count ?? 0))
       .catch(() => setMsg("Não foi possível carregar."));
+    fetch("/api/bling/webhook")
+      .then((r) => r.json())
+      .then((d) => setWebhook(d.status ?? null))
+      .catch(() => {});
   }
 
   useEffect(() => {
     load();
   }, []);
+
+  const webhookUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/api/bling/webhook`
+      : "/api/bling/webhook";
 
   async function importFile(file: File) {
     setImporting(true);
@@ -122,11 +138,68 @@ export default function ConsumoPage() {
         </div>
         {count === 0 && (
           <p className="mt-2 text-sm text-slate-400">
-            Nenhum consumo importado. O sistema está usando o consumo calculado pelas
-            vendas. Clique em <b>Importar planilha</b> para usar os números da sua
-            planilha.
+            Nenhum consumo importado. O sistema está usando o consumo automático
+            (webhook/vendas). Importe a planilha só se quiser sobrepor com os números
+            dela.
           </p>
         )}
+      </div>
+
+      {/* Consumo automático pelo webhook de estoque */}
+      <div className="mt-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-sm font-semibold text-slate-700">
+          Consumo automático (webhook de estoque)
+        </h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Quando ligado no Bling, o sistema recebe <b>cada saída de estoque</b> (venda,
+          NF, kit dando baixa nos itens) e calcula o consumo <b>sozinho</b> — o mesmo
+          método da planilha, sem trabalho manual. Vale <b>daqui pra frente</b>; até
+          juntar histórico, o consumo importado/das vendas cobre.
+        </p>
+
+        <div className="mt-3 grid grid-cols-3 gap-3">
+          <Stat label="Produtos monitorados" value={webhook?.products ?? 0} />
+          <Stat label="Saídas registradas" value={webhook?.totalExits ?? 0} />
+          <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-400">
+              Última movimentação
+            </div>
+            <div className="mt-1 text-sm font-medium text-slate-700">
+              {webhook?.lastAt
+                ? new Date(webhook.lastAt).toLocaleString("pt-BR")
+                : "—"}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-brand-light/60 bg-brand-tint/50 px-4 py-3 text-sm text-slate-600">
+          <b>Como ligar (uma vez, no Bling):</b>
+          <ol className="ml-4 mt-1 list-decimal space-y-0.5">
+            <li>
+              No Bling, painel do app/integração → <b>Webhooks</b> → novo webhook.
+            </li>
+            <li>
+              Evento: <b>Estoque</b>. URL:{" "}
+              <code className="rounded bg-white px-1 text-xs">{webhookUrl}</code>
+            </li>
+            <li>Salvar. Pronto — as saídas começam a ser contadas automaticamente.</li>
+          </ol>
+          <p className="mt-1 text-xs text-slate-400">
+            A segurança é validada automaticamente (assinatura do Bling). Se “Saídas
+            registradas” continuar em 0 após algumas vendas, me avise que eu ajusto.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+      <div className="text-xs uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="mt-1 text-lg font-semibold tabular-nums text-slate-800">
+        {formatInt(value)}
       </div>
     </div>
   );

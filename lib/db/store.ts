@@ -124,6 +124,29 @@ export interface SettingsStore {
   replaceManualConsumption(entries: { sku: string; cm: number }[]): Promise<void>;
   /** Zera o consumo importado (volta a usar o cálculo pelas vendas). */
   clearManualConsumption(): Promise<void>;
+
+  // Webhook de estoque (consumo automático pelas saídas).
+  /** Registra o novo saldo de um produto; acumula a saída (queda do saldo) no mês. */
+  recordStockBalance(
+    blingId: string,
+    sku: string | null,
+    newBalance: number,
+    ym: string,
+  ): Promise<{ exit: number; baseline: boolean }>;
+  /** Resolve o SKU de um id interno do Bling (para o webhook). null se não achar. */
+  getSkuByBlingId(blingId: string): Promise<string | null>;
+  /** Consumo médio por SKU pelas saídas acumuladas (total ÷ nº de meses). */
+  getStockExitConsumption(yms: string[]): Promise<Record<string, number>>;
+  /** Resumo do webhook: produtos monitorados, total de saídas, última movimentação. */
+  getStockExitStatus(): Promise<{
+    products: number;
+    totalExits: number;
+    lastAt: string | null;
+  }>;
+  /** Guarda o payload cru do webhook (para depuração). */
+  saveWebhookDebug(event: string, raw: string): Promise<void>;
+  /** Últimos payloads crus recebidos. */
+  getWebhookDebug(): Promise<{ receivedAt: string; event: string; raw: string }[]>;
   /** Quantidade em produção no fornecedor, por SKU. */
   getProductionIncoming(): Promise<Record<string, number>>;
   /** Substitui TODA a tabela de "em produção" (snapshot do momento). */
@@ -190,6 +213,9 @@ class MemoryStore implements SettingsStore {
   private leadTimes = new Map<string, number>();
   private consumption = new Map<string, number>();
   private manualConsumption = new Map<string, number>();
+  private stockLast = new Map<string, number>(); // bling_id -> saldo
+  private stockExits = new Map<string, number>(); // "sku|ym" -> saída
+  private webhookDebug: { receivedAt: string; event: string; raw: string }[] = [];
   private production = new Map<string, number>();
   private token: BlingToken | null = null;
   private productCache: CachedProduct[] = [];
@@ -234,6 +260,58 @@ class MemoryStore implements SettingsStore {
   }
   async clearManualConsumption() {
     this.manualConsumption.clear();
+  }
+  async recordStockBalance(
+    blingId: string,
+    sku: string | null,
+    newBalance: number,
+    ym: string,
+  ) {
+    const last = this.stockLast.get(blingId);
+    this.stockLast.set(blingId, newBalance);
+    if (last == null) return { exit: 0, baseline: true };
+    const delta = newBalance - last;
+    if (delta < 0 && sku) {
+      const k = `${sku}|${ym}`;
+      this.stockExits.set(k, (this.stockExits.get(k) ?? 0) + -delta);
+      return { exit: -delta, baseline: false };
+    }
+    return { exit: 0, baseline: false };
+  }
+  async getSkuByBlingId(blingId: string) {
+    const p = this.productCache.find((x) => x.blingId === blingId);
+    return p ? p.sku : null;
+  }
+  async getStockExitConsumption(yms: string[]) {
+    const set = new Set(yms);
+    const months = Math.max(1, yms.length);
+    const out: Record<string, number> = {};
+    for (const [key, qty] of this.stockExits) {
+      const [sku, ym] = key.split("|");
+      if (set.has(ym)) out[sku] = (out[sku] ?? 0) + qty;
+    }
+    for (const k of Object.keys(out)) out[k] = out[k] / months;
+    return out;
+  }
+  async getStockExitStatus() {
+    let total = 0;
+    for (const q of this.stockExits.values()) total += q;
+    return {
+      products: this.stockLast.size,
+      totalExits: total,
+      lastAt: this.webhookDebug[0]?.receivedAt ?? null,
+    };
+  }
+  async saveWebhookDebug(event: string, raw: string) {
+    this.webhookDebug.unshift({
+      receivedAt: new Date().toISOString(),
+      event,
+      raw,
+    });
+    this.webhookDebug = this.webhookDebug.slice(0, 20);
+  }
+  async getWebhookDebug() {
+    return this.webhookDebug;
   }
   async getProductionIncoming() {
     return Object.fromEntries(this.production);
@@ -550,6 +628,27 @@ async function ensureSchema(url: string): Promise<void> {
           cm numeric not null default 0,
           updated_at timestamptz not null default now()
         )`;
+        // Último saldo conhecido de cada produto (para calcular a saída = queda
+        // do saldo) — alimentado pelo webhook de estoque do Bling.
+        await sql`create table if not exists stock_last (
+          bling_id text primary key,
+          balance numeric not null default 0,
+          updated_at timestamptz not null default now()
+        )`;
+        // Saídas de estoque acumuladas por item e mês (consumo real, já com kits).
+        await sql`create table if not exists stock_exit_monthly (
+          sku text not null,
+          ym text not null,
+          qty numeric not null default 0,
+          primary key (sku, ym)
+        )`;
+        // Últimos payloads crus do webhook, para depuração.
+        await sql`create table if not exists webhook_debug (
+          id bigserial primary key,
+          received_at timestamptz not null default now(),
+          event text not null default '',
+          raw text not null default ''
+        )`;
       } finally {
         await sql.end({ timeout: 5 });
       }
@@ -684,6 +783,91 @@ class PostgresStore implements SettingsStore {
 
   async clearManualConsumption() {
     await this.run((sql) => sql`truncate table manual_consumption`);
+  }
+
+  async recordStockBalance(
+    blingId: string,
+    sku: string | null,
+    newBalance: number,
+    ym: string,
+  ) {
+    return this.run(async (sql) => {
+      const prev = await sql<{ balance: number }[]>`
+        select balance from stock_last where bling_id = ${blingId}`;
+      // Grava/atualiza o saldo atual.
+      await sql`
+        insert into stock_last (bling_id, balance, updated_at)
+        values (${blingId}, ${newBalance}, now())
+        on conflict (bling_id) do update set balance = ${newBalance}, updated_at = now()`;
+      if (prev.length === 0) return { exit: 0, baseline: true };
+      const delta = newBalance - Number(prev[0].balance);
+      if (delta < 0 && sku) {
+        await sql`
+          insert into stock_exit_monthly (sku, ym, qty)
+          values (${sku}, ${ym}, ${-delta})
+          on conflict (sku, ym) do update
+            set qty = stock_exit_monthly.qty + ${-delta}`;
+        return { exit: -delta, baseline: false };
+      }
+      return { exit: 0, baseline: false };
+    });
+  }
+
+  getSkuByBlingId(blingId: string) {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ sku: string }[]>`
+        select sku from product_cache where bling_id = ${blingId} limit 1`;
+      return rows.length > 0 ? rows[0].sku : null;
+    }, null as string | null);
+  }
+
+  getStockExitConsumption(yms: string[]) {
+    if (yms.length === 0) return Promise.resolve({} as Record<string, number>);
+    const months = Math.max(1, yms.length);
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ sku: string; total: number }[]>`
+        select sku, sum(qty) as total from stock_exit_monthly
+        where ym in ${sql(yms)} group by sku`;
+      return Object.fromEntries(rows.map((r) => [r.sku, Number(r.total) / months]));
+    }, {} as Record<string, number>);
+  }
+
+  getStockExitStatus() {
+    return this.safeRead(
+      async (sql) => {
+        const [p] = await sql<{ n: number }[]>`select count(*)::int as n from stock_last`;
+        const [t] = await sql<{ s: number }[]>`select coalesce(sum(qty),0) as s from stock_exit_monthly`;
+        const [l] = await sql<{ last: string | null }[]>`select max(received_at) as last from webhook_debug`;
+        return {
+          products: Number(p?.n ?? 0),
+          totalExits: Number(t?.s ?? 0),
+          lastAt: l?.last ? new Date(l.last).toISOString() : null,
+        };
+      },
+      { products: 0, totalExits: 0, lastAt: null },
+    );
+  }
+
+  async saveWebhookDebug(event: string, raw: string) {
+    await this.run(async (sql) => {
+      await sql`insert into webhook_debug (event, raw) values (${event}, ${raw.slice(0, 4000)})`;
+      // Mantém só os últimos 20.
+      await sql`delete from webhook_debug where id not in (
+        select id from webhook_debug order by id desc limit 20
+      )`;
+    });
+  }
+
+  getWebhookDebug() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ received_at: string; event: string; raw: string }[]>`
+        select received_at, event, raw from webhook_debug order by id desc limit 20`;
+      return rows.map((r) => ({
+        receivedAt: new Date(r.received_at).toISOString(),
+        event: r.event,
+        raw: r.raw,
+      }));
+    }, [] as { receivedAt: string; event: string; raw: string }[]);
   }
 
   getProductionIncoming() {

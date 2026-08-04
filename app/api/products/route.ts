@@ -1,21 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/db/store";
+import { lastYms } from "@/lib/bling/real";
 import { CURVES, type Curve } from "@/lib/bling/types";
 
 // Lista os produtos com fornecedor e curva atual (para a tela de curvas).
 // Lê direto do cache do banco numa consulta só (rápido) — não chama o Bling.
 export async function GET() {
   const store = getStore();
-  const [rows, manualCons] = await Promise.all([
+  const [rows, manualCons, stockExit] = await Promise.all([
     store.getProductsForListing(),
     store.getManualConsumption(),
+    store.getStockExitConsumption(lastYms(6)),
   ]);
   return NextResponse.json({
-    // Consumo importado da planilha tem precedência sobre o calculado.
+    // Precedência: planilha importada > saídas do webhook > calculado por vendas.
     products: rows.map((p) => ({
       id: p.sku,
       ...p,
-      monthlyConsumption: manualCons[p.sku] ?? p.monthlyConsumption,
+      monthlyConsumption:
+        manualCons[p.sku] ?? stockExit[p.sku] ?? p.monthlyConsumption,
     })),
   });
 }

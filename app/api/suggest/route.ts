@@ -38,23 +38,27 @@ export async function POST(req: NextRequest) {
   };
 
   const ds = await getDataSource();
-  const [suppliers, products, windowConsumption, kitMap, manualCons] =
+  const [suppliers, products, windowConsumption, kitMap, manualCons, stockExit] =
     await Promise.all([
       ds.listSuppliers(),
       ds.listProducts(),
       getStore().getItemConsumption(lastYms(consumptionMonths)),
       getStore().getKitComponents(),
       getStore().getManualConsumption(),
+      getStore().getStockExitConsumption(lastYms(consumptionMonths)),
     ]);
 
   // Consumo de cada produto, por ordem de precedência:
   //  1) CM importado da planilha da cliente (já conta as saídas via kit);
-  //  2) CM da janela escolhida (vendas ÷ meses, com kits mapeados decompostos);
-  //  3) o consumo já salvo no produto.
+  //  2) CM pelas SAÍDAS de estoque (webhook) — automático, também conta kits;
+  //  3) CM da janela escolhida (vendas ÷ meses, com kits mapeados decompostos);
+  //  4) o consumo já salvo no produto.
   const hasWindow = Object.keys(windowConsumption).length > 0;
   const adjusted = products.map((p) => {
     const manual = manualCons[p.sku];
     if (manual != null) return { ...p, monthlyConsumption: manual };
+    const wh = stockExit[p.sku];
+    if (wh != null) return { ...p, monthlyConsumption: wh };
     if (hasWindow)
       return {
         ...p,
