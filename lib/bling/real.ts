@@ -18,6 +18,10 @@ import { getStore, type CachedProduct } from "@/lib/db/store";
 const BASE_URL = "https://www.bling.com.br/Api/v3";
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 100; // trava de segurança (até 10.000 produtos)
+// Pedaços que buscam DETALHE por item precisam ser menores para caber nos 60s
+// da hospedagem (cada detalhe é uma consulta ao Bling, ~3/s).
+const KIT_LIMIT = 25; // produtos por bloco na sincronização de kits
+const SALES_LIMIT = 50; // pedidos por bloco no cálculo de consumo
 
 type Json = Record<string, unknown>;
 
@@ -360,7 +364,7 @@ export class BlingApiDataSource implements BlingDataSource {
 
     const idMap = await store.getBlingIdMap(); // id do Bling → SKU
     const list = await this.get<{ data?: Json[] }>(
-      `/produtos?pagina=${job.nextPage}&limite=${PAGE_LIMIT}`,
+      `/produtos?pagina=${job.nextPage}&limite=${KIT_LIMIT}`,
     );
     const items = list.data ?? [];
     const ids = items.map((p) => str(p.id)).filter(Boolean);
@@ -401,7 +405,7 @@ export class BlingApiDataSource implements BlingDataSource {
     await store.addKitComponents(rows);
     const processed = job.processed + items.length;
     const kits = job.kits + kitsFound;
-    const done = items.length < PAGE_LIMIT;
+    const done = items.length < KIT_LIMIT;
     await store.saveKitProgress({ nextPage: job.nextPage + 1, processed, kits, done });
     return { done, processed, kits };
   }
@@ -445,7 +449,7 @@ export class BlingApiDataSource implements BlingDataSource {
 
     const period = `dataInicial=${job.periodStart}&dataFinal=${job.periodEnd}`;
     const list = await this.get<{ data?: Json[] }>(
-      `/pedidos/vendas?limite=${PAGE_LIMIT}&pagina=${job.nextPage}&${period}`,
+      `/pedidos/vendas?limite=${SALES_LIMIT}&pagina=${job.nextPage}&${period}`,
     );
     const orders = list.data ?? [];
 
@@ -503,7 +507,7 @@ export class BlingApiDataSource implements BlingDataSource {
     );
 
     const processed = job.processed + orders.length;
-    const done = orders.length < PAGE_LIMIT;
+    const done = orders.length < SALES_LIMIT;
     await store.saveConsumptionProgress(job.nextPage + 1, processed, done);
 
     if (done) {
