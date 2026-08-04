@@ -55,14 +55,21 @@ export async function POST(req: NextRequest) {
       }))
     : products;
 
-  // Para reposição, kits (produtos com composição) só atrapalham: não se compra
-  // o kit, e sim os itens que o formam. Por padrão escondemos os kits e mostramos
-  // só os produtos unitários. showKits=true traz os kits de volta.
+  // Para reposição, kits só atrapalham: não se compra o kit, e sim os itens que
+  // o formam. Um produto é considerado kit (e escondido por padrão) se:
+  //  (a) tem composição sincronizada do Bling, OU
+  //  (b) está no fornecedor "KITS" (convenção da DANZI para marcar os kits).
+  // showKits=true traz os kits de volta.
   const kitSkus = new Set(Object.keys(kitMap));
+  const kitSupplierIds = new Set(
+    suppliers
+      .filter((s) => s.name.trim().toUpperCase() === "KITS")
+      .map((s) => s.id),
+  );
+  const isKit = (p: (typeof adjusted)[number]) =>
+    kitSkus.has(p.sku) || kitSupplierIds.has(p.supplierId);
   const visible =
-    body.showKits === true || kitSkus.size === 0
-      ? adjusted
-      : adjusted.filter((p) => !kitSkus.has(p.sku));
+    body.showKits === true ? adjusted : adjusted.filter((p) => !isKit(p));
 
   const result = calcReplenishment(visible, suppliers, filters);
   return NextResponse.json(result);
