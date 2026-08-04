@@ -872,13 +872,19 @@ class PostgresStore implements SettingsStore {
     if (yms.length === 0) return 0;
     const months = Math.max(1, yms.length);
     return this.run(async (sql) => {
+      // Recalcula TODOS os produtos: quem nao vendeu no periodo (kits mapeados
+      // inclusos) recebe cm = 0. Sem isso, um kit que antes teve consumo errado
+      // e agora sumiu das vendas manteria o valor antigo no relatorio.
       const res = await sql`
         insert into monthly_consumption (sku, cm, updated_at)
-        select mis.sku, sum(mis.qty) / ${months}, now()
-          from monthly_item_sales mis
-          join product_cache pc on pc.sku = mis.sku
-         where mis.ym in ${sql(yms)}
-         group by mis.sku
+        select pc.sku, coalesce(s.total, 0) / ${months}, now()
+          from product_cache pc
+          left join (
+            select mis.sku, sum(mis.qty) as total
+              from monthly_item_sales mis
+             where mis.ym in ${sql(yms)}
+             group by mis.sku
+          ) s on s.sku = pc.sku
         on conflict (sku) do update set cm = excluded.cm, updated_at = now()`;
       return res.count;
     });
