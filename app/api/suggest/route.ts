@@ -38,22 +38,30 @@ export async function POST(req: NextRequest) {
   };
 
   const ds = await getDataSource();
-  const [suppliers, products, windowConsumption, kitMap] = await Promise.all([
-    ds.listSuppliers(),
-    ds.listProducts(),
-    getStore().getItemConsumption(lastYms(consumptionMonths)),
-    getStore().getKitComponents(),
-  ]);
+  const [suppliers, products, windowConsumption, kitMap, manualCons] =
+    await Promise.all([
+      ds.listSuppliers(),
+      ds.listProducts(),
+      getStore().getItemConsumption(lastYms(consumptionMonths)),
+      getStore().getKitComponents(),
+      getStore().getManualConsumption(),
+    ]);
 
-  // Substitui o consumo pelo da janela escolhida (CM = total vendido ÷ meses),
-  // já com kits decompostos. Se não houver histórico, mantém o consumo salvo.
+  // Consumo de cada produto, por ordem de precedência:
+  //  1) CM importado da planilha da cliente (já conta as saídas via kit);
+  //  2) CM da janela escolhida (vendas ÷ meses, com kits mapeados decompostos);
+  //  3) o consumo já salvo no produto.
   const hasWindow = Object.keys(windowConsumption).length > 0;
-  const adjusted = hasWindow
-    ? products.map((p) => ({
+  const adjusted = products.map((p) => {
+    const manual = manualCons[p.sku];
+    if (manual != null) return { ...p, monthlyConsumption: manual };
+    if (hasWindow)
+      return {
         ...p,
         monthlyConsumption: (windowConsumption[p.sku] ?? 0) / consumptionMonths,
-      }))
-    : products;
+      };
+    return p;
+  });
 
   // Para reposição, kits só atrapalham: não se compra o kit, e sim os itens que
   // o formam. Um produto é considerado kit (e escondido por padrão) se:

@@ -39,6 +39,19 @@ const links = [
     ),
   },
   {
+    href: "/consumo",
+    label: "Consumo (planilha)",
+    desc: "Importar CM da planilha",
+    icon: (
+      <path
+        d="M9 13h6M9 17h6M9 9h1M14 2v6h6M6 2h9l5 5v13a1 1 0 01-1 1H6a1 1 0 01-1-1V3a1 1 0 011-1z"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+  {
     href: "/producao",
     label: "Em produção",
     desc: "Somar ao estoque",

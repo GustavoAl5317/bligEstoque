@@ -5,9 +5,18 @@ import { CURVES, type Curve } from "@/lib/bling/types";
 // Lista os produtos com fornecedor e curva atual (para a tela de curvas).
 // Lê direto do cache do banco numa consulta só (rápido) — não chama o Bling.
 export async function GET() {
-  const rows = await getStore().getProductsForListing();
+  const store = getStore();
+  const [rows, manualCons] = await Promise.all([
+    store.getProductsForListing(),
+    store.getManualConsumption(),
+  ]);
   return NextResponse.json({
-    products: rows.map((p) => ({ id: p.sku, ...p })),
+    // Consumo importado da planilha tem precedência sobre o calculado.
+    products: rows.map((p) => ({
+      id: p.sku,
+      ...p,
+      monthlyConsumption: manualCons[p.sku] ?? p.monthlyConsumption,
+    })),
   });
 }
 

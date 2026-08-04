@@ -118,6 +118,12 @@ export interface SettingsStore {
   setSupplierLeadTime(id: string, days: number): Promise<void>;
   getMonthlyConsumption(): Promise<Record<string, number>>;
   setMonthlyConsumption(sku: string, cm: number): Promise<void>;
+  /** Consumo importado da planilha (tem precedência). sku -> CM. */
+  getManualConsumption(): Promise<Record<string, number>>;
+  /** Substitui TODO o consumo importado (snapshot da planilha enviada). */
+  replaceManualConsumption(entries: { sku: string; cm: number }[]): Promise<void>;
+  /** Zera o consumo importado (volta a usar o cálculo pelas vendas). */
+  clearManualConsumption(): Promise<void>;
   /** Quantidade em produção no fornecedor, por SKU. */
   getProductionIncoming(): Promise<Record<string, number>>;
   /** Substitui TODA a tabela de "em produção" (snapshot do momento). */
@@ -183,6 +189,7 @@ class MemoryStore implements SettingsStore {
   private curves = new Map<string, Curve>();
   private leadTimes = new Map<string, number>();
   private consumption = new Map<string, number>();
+  private manualConsumption = new Map<string, number>();
   private production = new Map<string, number>();
   private token: BlingToken | null = null;
   private productCache: CachedProduct[] = [];
@@ -217,6 +224,16 @@ class MemoryStore implements SettingsStore {
   }
   async setMonthlyConsumption(sku: string, cm: number) {
     this.consumption.set(sku, cm);
+  }
+  async getManualConsumption() {
+    return Object.fromEntries(this.manualConsumption);
+  }
+  async replaceManualConsumption(entries: { sku: string; cm: number }[]) {
+    this.manualConsumption.clear();
+    for (const e of entries) this.manualConsumption.set(e.sku, e.cm);
+  }
+  async clearManualConsumption() {
+    this.manualConsumption.clear();
   }
   async getProductionIncoming() {
     return Object.fromEntries(this.production);
@@ -526,6 +543,13 @@ async function ensureSchema(url: string): Promise<void> {
           snapshot_date date not null,
           primary key (sku, snapshot_date)
         )`;
+        // Consumo importado da planilha da cliente (tem precedência sobre o
+        // consumo calculado pelas vendas).
+        await sql`create table if not exists manual_consumption (
+          sku text primary key,
+          cm numeric not null default 0,
+          updated_at timestamptz not null default now()
+        )`;
       } finally {
         await sql.end({ timeout: 5 });
       }
@@ -632,6 +656,34 @@ class PostgresStore implements SettingsStore {
         values (${sku}, ${cm}, now())
         on conflict (sku) do update set cm = excluded.cm, updated_at = now()`,
     );
+  }
+
+  getManualConsumption() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ sku: string; cm: number }[]>`
+        select sku, cm from manual_consumption`;
+      return Object.fromEntries(rows.map((r) => [r.sku, Number(r.cm)]));
+    }, {} as Record<string, number>);
+  }
+
+  async replaceManualConsumption(entries: { sku: string; cm: number }[]) {
+    await this.run(async (sql) => {
+      await sql`truncate table manual_consumption`;
+      const CHUNK = 500;
+      for (let i = 0; i < entries.length; i += CHUNK) {
+        const slice = entries
+          .slice(i, i + CHUNK)
+          .map((e) => ({ sku: e.sku, cm: e.cm }));
+        if (slice.length > 0) {
+          await sql`insert into manual_consumption ${sql(slice, "sku", "cm")}
+            on conflict (sku) do update set cm = excluded.cm, updated_at = now()`;
+        }
+      }
+    });
+  }
+
+  async clearManualConsumption() {
+    await this.run((sql) => sql`truncate table manual_consumption`);
   }
 
   getProductionIncoming() {
