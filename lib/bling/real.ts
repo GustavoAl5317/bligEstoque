@@ -56,15 +56,26 @@ export class BlingApiDataSource implements BlingDataSource {
   constructor(private readonly accessToken: string) {}
 
   private async get<T = Json>(path: string, attempt = 0): Promise<T> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        Accept: "application/json",
-      },
-      cache: "no-store",
-    });
-    // 429 = limite de requisições atingido: espera e tenta de novo.
-    if (res.status === 429 && attempt < 5) {
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}${path}`, {
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      });
+    } catch (e) {
+      // Falha de rede (conexão caiu): tenta de novo algumas vezes.
+      if (attempt < 4) {
+        await sleep(1000 * (attempt + 1));
+        return this.get<T>(path, attempt + 1);
+      }
+      throw e;
+    }
+    // 429 = limite de requisições; 5xx = erro momentâneo do Bling.
+    // Nos dois casos, espera e tenta de novo (evita derrubar o bloco inteiro).
+    if ((res.status === 429 || res.status >= 500) && attempt < 5) {
       const retryAfter = Number(res.headers.get("retry-after"));
       await sleep(retryAfter > 0 ? retryAfter * 1000 : 1000 * (attempt + 1));
       return this.get<T>(path, attempt + 1);
