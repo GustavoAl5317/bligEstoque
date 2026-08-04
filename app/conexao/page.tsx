@@ -140,16 +140,37 @@ export default function ConexaoPage() {
                 não para o kit. É um processo pesado (~alguns minutos): rode{" "}
                 <b>1x</b> e sempre que criar novos kits.
               </p>
+              {sync.pausedKits !== null && !sync.active && (
+                <p className="mb-3 text-sm text-amber-700">
+                  Pausado em {sync.pausedKits} produtos. Continue para terminar.
+                </p>
+              )}
               {kitMsg && <p className="mb-3 text-sm text-slate-600">{kitMsg}</p>}
-              <button
-                onClick={sync.runKitSync}
-                disabled={sync.active}
-                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
-              >
-                {sync.active && sync.label === "Composição dos kits"
-                  ? "Processando…"
-                  : "Sincronizar composição dos kits"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {sync.pausedKits !== null && !sync.active && (
+                  <button
+                    onClick={sync.resumeKitSync}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark"
+                  >
+                    Continuar de onde parou
+                  </button>
+                )}
+                <button
+                  onClick={sync.runKitSync}
+                  disabled={sync.active}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+                    sync.pausedKits !== null && !sync.active
+                      ? "border border-slate-300 text-slate-700 hover:border-slate-400"
+                      : "bg-brand text-white hover:bg-brand-dark"
+                  }`}
+                >
+                  {sync.active && sync.label === "Composição dos kits"
+                    ? "Processando…"
+                    : sync.pausedKits !== null
+                      ? "Recomeçar do zero"
+                      : "Sincronizar composição dos kits"}
+                </button>
+              </div>
             </div>
           )}
 
@@ -163,16 +184,43 @@ export default function ConexaoPage() {
                 os <b>kits já contados nos seus itens</b>. É pesado (~30 min): pode
                 deixar rodando. Rode <b>1x por mês</b> (depois de sincronizar os kits).
               </p>
+              {sync.pausedKits !== null && (
+                <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  ⚠️ Termine a <b>composição dos kits</b> primeiro. Senão o consumo
+                  dos kits não vai para os itens.
+                </p>
+              )}
+              {sync.pausedConsumption !== null && !sync.active && (
+                <p className="mb-3 text-sm text-amber-700">
+                  Pausado em {sync.pausedConsumption} pedidos.
+                </p>
+              )}
               {consMsg && <p className="mb-3 text-sm text-slate-600">{consMsg}</p>}
-              <button
-                onClick={sync.runConsumption}
-                disabled={sync.active}
-                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
-              >
-                {sync.active && sync.label === "Consumo por item"
-                  ? "Processando…"
-                  : "Calcular consumo"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {sync.pausedConsumption !== null && !sync.active && (
+                  <button
+                    onClick={sync.resumeConsumption}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark"
+                  >
+                    Continuar de onde parou
+                  </button>
+                )}
+                <button
+                  onClick={sync.runConsumption}
+                  disabled={sync.active}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+                    sync.pausedConsumption !== null && !sync.active
+                      ? "border border-slate-300 text-slate-700 hover:border-slate-400"
+                      : "bg-brand text-white hover:bg-brand-dark"
+                  }`}
+                >
+                  {sync.active && sync.label === "Consumo por item"
+                    ? "Processando…"
+                    : sync.pausedConsumption !== null
+                      ? "Recomeçar (do zero)"
+                      : "Calcular consumo"}
+                </button>
+              </div>
             </div>
           )}
         </div>
