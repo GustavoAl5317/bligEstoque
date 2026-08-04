@@ -52,15 +52,13 @@ export async function POST(req: NextRequest) {
   // Validação da assinatura (HMAC-SHA256 do corpo com o client secret).
   const secret = process.env.BLING_CLIENT_SECRET;
   const sig = req.headers.get("x-bling-signature-256") || "";
-  if (secret) {
+  let signatureOk = false;
+  if (secret && sig) {
     const expected =
       "sha256=" + crypto.createHmac("sha256", secret).update(raw, "utf8").digest("hex");
-    const ok =
+    signatureOk =
       sig.length === expected.length &&
       crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-    if (!ok) {
-      return NextResponse.json({ error: "assinatura inválida" }, { status: 401 });
-    }
   }
 
   let body: Json;
@@ -72,33 +70,34 @@ export async function POST(req: NextRequest) {
 
   const event = String(body.event ?? "");
   const store = getStore();
-  // Guarda o payload cru para depuração (ajuda a ajustar os campos).
-  await store.saveWebhookDebug(event, raw).catch(() => {});
+  // FASE DE TESTE: guardamos TODO payload cru (mesmo sem assinatura válida) para
+  // descobrir o formato real que o Bling envia e ajustar. Depois de validado,
+  // passamos a exigir a assinatura. O rótulo registra se a assinatura bateu.
+  const label = `${event || "?"}${signatureOk ? " [sig ok]" : " [sem sig]"}`;
+  await store.saveWebhookDebug(label, raw).catch(() => {});
 
-  // Só tratamos eventos de estoque.
-  if (!event.startsWith("stock")) {
-    return NextResponse.json({ ok: true, ignorado: event });
-  }
-
-  const data = (body.data ?? {}) as Json;
-  const produto = (data.produto ?? {}) as Json;
+  // Tenta achar produto + saldo em vários formatos (webhook novo ou callback
+  // clássico de estoque). Procura o objeto de estoque em locais comuns.
+  const data = (body.data ?? body) as Json;
+  const estoque = (data.estoque ?? data) as Json;
+  const produto = (data.produto ?? estoque.produto ?? {}) as Json;
 
   const blingId =
     pickId(produto, ["id"]) ??
-    pickId(data, ["produtoId", "idProduto", "produto_id", "id"]);
-  const saldo = pickNum(data, [
+    pickId(data, ["produtoId", "idProduto", "produto_id", "id"]) ??
+    pickId(estoque, ["produtoId", "idProduto", "id"]);
+  const saldo = pickNum(estoque, [
     "saldoFisico",
     "saldoFisicoTotal",
     "saldo",
     "saldoVirtual",
     "saldoVirtualTotal",
     "quantidade",
-    "estoque",
   ]);
 
   if (!blingId || saldo == null) {
     // Não conseguimos ler os campos: já ficou salvo no debug para ajustarmos.
-    return NextResponse.json({ ok: true, aviso: "campos não reconhecidos" });
+    return NextResponse.json({ ok: true, aviso: "campos não reconhecidos", event });
   }
 
   const dateStr = typeof body.date === "string" ? body.date : "";
