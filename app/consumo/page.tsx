@@ -38,14 +38,14 @@ export default function ConsumoPage() {
       .catch(() => {});
   }
 
+  // Só define depois de montar no cliente — evita erro de hydration (o servidor
+  // não conhece a origem do site).
+  const [webhookUrl, setWebhookUrl] = useState("/api/bling/webhook");
+
   useEffect(() => {
     load();
+    setWebhookUrl(`${window.location.origin}/api/bling/webhook`);
   }, []);
-
-  const webhookUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/api/bling/webhook`
-      : "/api/bling/webhook";
 
   async function importFile(file: File) {
     setImporting(true);
@@ -239,17 +239,30 @@ export default function ConsumoPage() {
           <b>Como ligar (uma vez, no Bling):</b>
           <ol className="ml-4 mt-1 list-decimal space-y-0.5">
             <li>
-              No Bling, painel do app/integração → <b>Webhooks</b> → novo webhook.
+              No Bling: <b>Configurações</b> (⚙️) → <b>Integrações</b> →{" "}
+              <b>Configurações de integração com lojas virtuais e marketplaces</b>.
             </li>
             <li>
-              Evento: <b>Estoque</b>. URL:{" "}
+              Escolha <b>Outros</b> → <b>API</b> e abra a aba <b>Callbacks</b>.
+            </li>
+            <li>
+              Em <b>Tipo de retorno</b> selecione <b>JSON</b>, ative o{" "}
+              <b>Callback de estoque</b> e cole a URL:{" "}
               <code className="rounded bg-white px-1 text-xs">{webhookUrl}</code>
             </li>
-            <li>Salvar. Pronto — as saídas começam a ser contadas automaticamente.</li>
+            <li>
+              Na aba <b>Autenticação</b>, preencha o <b>Nome do canal de venda</b>{" "}
+              (ex.: <i>DANZI Estoque</i>) — é obrigatório pra salvar.
+            </li>
+            <li>
+              Clique em <b>Salvar</b>. Pronto — as saídas começam a ser contadas
+              automaticamente.
+            </li>
           </ol>
           <p className="mt-1 text-xs text-slate-400">
-            A segurança é validada automaticamente (assinatura do Bling). Se “Saídas
-            registradas” continuar em 0 após algumas vendas, me avise que eu ajusto.
+            Vale <b>daqui pra frente</b>: o webhook conta as saídas a partir do dia em
+            que foi ligado. Se “Saídas registradas” continuar em 0 depois de mexer no
+            estoque, me avise que eu ajusto.
           </p>
         </div>
       </div>
