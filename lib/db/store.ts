@@ -328,9 +328,14 @@ class MemoryStore implements SettingsStore {
   }
   async getStockExitStatus() {
     let total = 0;
-    for (const q of this.stockExits.values()) total += q;
+    const skus = new Set<string>();
+    for (const [k, q] of this.stockExits) {
+      total += q;
+      skus.add(k.split("|")[0]);
+    }
     return {
-      products: this.stockLast.size,
+      // Só produtos que REALMENTE tiveram saída registrada (não ids vistos/ruído).
+      products: skus.size,
       totalExits: total,
       lastAt: this.webhookDebug[0]?.receivedAt ?? null,
     };
@@ -909,7 +914,8 @@ class PostgresStore implements SettingsStore {
   getStockExitStatus() {
     return this.safeRead(
       async (sql) => {
-        const [p] = await sql<{ n: number }[]>`select count(*)::int as n from stock_last`;
+        // Só produtos que REALMENTE tiveram saída registrada (não ids vistos/ruído).
+        const [p] = await sql<{ n: number }[]>`select count(distinct sku)::int as n from stock_exit_monthly`;
         const [t] = await sql<{ s: number }[]>`select coalesce(sum(qty),0) as s from stock_exit_monthly`;
         const [l] = await sql<{ last: string | null }[]>`select max(received_at) as last from webhook_debug`;
         return {
