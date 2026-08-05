@@ -45,6 +45,10 @@ export default function ConsumoPage() {
   useEffect(() => {
     load();
     setWebhookUrl(`${window.location.origin}/api/bling/webhook`);
+    // Atualiza sozinho a cada 15s — as saídas do webhook aparecem sem precisar
+    // clicar em "Atualizar".
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
   }, []);
 
   async function importFile(file: File) {
@@ -189,12 +193,15 @@ export default function ConsumoPage() {
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               Saídas por item (acumulado)
             </h3>
-            <button
-              onClick={load}
-              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-400"
-            >
-              Atualizar
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">atualiza sozinho</span>
+              <button
+                onClick={load}
+                className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-400"
+              >
+                Atualizar
+              </button>
+            </div>
           </div>
           {detail.length === 0 ? (
             <p className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">
