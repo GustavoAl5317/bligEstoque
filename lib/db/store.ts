@@ -143,6 +143,11 @@ export interface SettingsStore {
     totalExits: number;
     lastAt: string | null;
   }>;
+  /** Detalhe item a item das saídas acumuladas (para acompanhar o webhook encher). */
+  getStockExitDetail(
+    yms: string[],
+    limit?: number,
+  ): Promise<{ sku: string; name: string; exits: number }[]>;
   /** Guarda o payload cru do webhook (para depuração). */
   saveWebhookDebug(event: string, raw: string): Promise<void>;
   /** Últimos payloads crus recebidos. */
@@ -301,6 +306,22 @@ class MemoryStore implements SettingsStore {
       totalExits: total,
       lastAt: this.webhookDebug[0]?.receivedAt ?? null,
     };
+  }
+  async getStockExitDetail(yms: string[], limit = 200) {
+    const set = new Set(yms);
+    const bySku: Record<string, number> = {};
+    for (const [key, qty] of this.stockExits) {
+      const [sku, ym] = key.split("|");
+      if (set.has(ym)) bySku[sku] = (bySku[sku] ?? 0) + qty;
+    }
+    return Object.entries(bySku)
+      .map(([sku, exits]) => ({
+        sku,
+        name: this.productCache.find((p) => p.sku === sku)?.name ?? "",
+        exits,
+      }))
+      .sort((a, b) => b.exits - a.exits)
+      .slice(0, limit);
   }
   async saveWebhookDebug(event: string, raw: string) {
     this.webhookDebug.unshift({
@@ -845,6 +866,30 @@ class PostgresStore implements SettingsStore {
         };
       },
       { products: 0, totalExits: 0, lastAt: null },
+    );
+  }
+
+  getStockExitDetail(yms: string[], limit = 200) {
+    if (yms.length === 0) {
+      return Promise.resolve([] as { sku: string; name: string; exits: number }[]);
+    }
+    return this.safeRead(
+      async (sql) => {
+        const rows = await sql<{ sku: string; name: string | null; exits: number }[]>`
+          select e.sku, p.name as name, sum(e.qty) as exits
+          from stock_exit_monthly e
+          left join product_cache p on p.sku = e.sku
+          where e.ym in ${sql(yms)}
+          group by e.sku, p.name
+          order by exits desc
+          limit ${limit}`;
+        return rows.map((r) => ({
+          sku: r.sku,
+          name: r.name ?? "",
+          exits: Number(r.exits),
+        }));
+      },
+      [] as { sku: string; name: string; exits: number }[],
     );
   }
 

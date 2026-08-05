@@ -9,9 +9,16 @@ interface WebhookStatus {
   lastAt: string | null;
 }
 
+interface ExitRow {
+  sku: string;
+  name: string;
+  exits: number;
+}
+
 export default function ConsumoPage() {
   const [count, setCount] = useState<number | null>(null);
   const [webhook, setWebhook] = useState<WebhookStatus | null>(null);
+  const [detail, setDetail] = useState<ExitRow[]>([]);
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -21,9 +28,13 @@ export default function ConsumoPage() {
       .then((r) => r.json())
       .then((d) => setCount(d.count ?? 0))
       .catch(() => setMsg("Não foi possível carregar."));
-    fetch("/api/bling/webhook")
+    // Endpoint autenticado: traz o resumo E o detalhe item a item das saídas.
+    fetch("/api/bling/consumo-webhook")
       .then((r) => r.json())
-      .then((d) => setWebhook(d.status ?? null))
+      .then((d) => {
+        setWebhook(d.status ?? null);
+        setDetail(Array.isArray(d.detail) ? d.detail : []);
+      })
       .catch(() => {});
   }
 
@@ -170,6 +181,58 @@ export default function ConsumoPage() {
                 : "—"}
             </div>
           </div>
+        </div>
+
+        {/* Detalhe item a item — dá pra acompanhar o consumo "enchendo" no mês. */}
+        <div className="mt-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Saídas por item (acumulado)
+            </h3>
+            <button
+              onClick={load}
+              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-400"
+            >
+              Atualizar
+            </button>
+          </div>
+          {detail.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">
+              Nenhuma saída registrada ainda. Assim que o Bling notificar a primeira
+              movimentação de estoque, os itens aparecem aqui e o número vai subindo
+              ao longo do mês.
+            </p>
+          ) : (
+            <div className="max-h-96 overflow-auto rounded-lg border border-slate-200">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">SKU</th>
+                    <th className="px-3 py-2 font-medium">Produto</th>
+                    <th className="px-3 py-2 text-right font-medium">Saídas</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {detail.map((r) => (
+                    <tr key={r.sku} className="hover:bg-slate-50">
+                      <td className="px-3 py-1.5 font-mono text-xs text-slate-500">
+                        {r.sku}
+                      </td>
+                      <td className="px-3 py-1.5 text-slate-700">{r.name || "—"}</td>
+                      <td className="px-3 py-1.5 text-right font-semibold tabular-nums text-slate-800">
+                        {formatInt(r.exits)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="mt-1 text-xs text-slate-400">
+            É a soma das <b>saídas de estoque</b> desde que o webhook foi ligado — o
+            consumo real, já contando os kits. No fim do mês esse número é a base do
+            consumo automático.
+          </p>
         </div>
 
         <div className="mt-4 rounded-lg border border-brand-light/60 bg-brand-tint/50 px-4 py-3 text-sm text-slate-600">
