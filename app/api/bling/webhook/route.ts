@@ -65,46 +65,52 @@ export async function POST(req: NextRequest) {
   try {
     body = JSON.parse(raw) as Json;
   } catch {
+    await getStore().saveWebhookDebug("json inválido", raw).catch(() => {});
     return NextResponse.json({ error: "json inválido" }, { status: 400 });
   }
 
   const event = String(body.event ?? "");
   const store = getStore();
-  // FASE DE TESTE: guardamos TODO payload cru (mesmo sem assinatura válida) para
-  // descobrir o formato real que o Bling envia e ajustar. Depois de validado,
-  // passamos a exigir a assinatura. O rótulo registra se a assinatura bateu.
-  const label = `${event || "?"}${signatureOk ? " [sig ok]" : " [sem sig]"}`;
-  await store.saveWebhookDebug(label, raw).catch(() => {});
+  const sigLabel = signatureOk ? "sig ok" : "sem sig";
 
-  // Tenta achar produto + saldo em vários formatos (webhook novo ou callback
-  // clássico de estoque). Procura o objeto de estoque em locais comuns.
-  const data = (body.data ?? body) as Json;
-  const estoque = (data.estoque ?? data) as Json;
-  const produto = (data.produto ?? estoque.produto ?? {}) as Json;
-
-  const blingId =
-    pickId(produto, ["id"]) ??
-    pickId(data, ["produtoId", "idProduto", "produto_id", "id"]) ??
-    pickId(estoque, ["produtoId", "idProduto", "id"]);
-  const saldo = pickNum(estoque, [
-    "saldoFisico",
-    "saldoFisicoTotal",
-    "saldo",
-    "saldoVirtual",
-    "saldoVirtualTotal",
-    "quantidade",
-  ]);
-
-  if (!blingId || saldo == null) {
-    // Não conseguimos ler os campos: já ficou salvo no debug para ajustarmos.
-    return NextResponse.json({ ok: true, aviso: "campos não reconhecidos", event });
+  // Só interessa o ESTOQUE FÍSICO (stock.*). Ignoramos virtual_stock.* (duplicaria
+  // a contagem e mistura produtos compostos), produtos, pedidos, etc.
+  if (!event.startsWith("stock.")) {
+    await store.saveWebhookDebug(`${event || "?"} [${sigLabel}] ignorado`, raw).catch(() => {});
+    return NextResponse.json({ ok: true, ignorado: event });
   }
+
+  // Formato real do webhook v3 (evento stock.created):
+  //   data.produto.id, data.operacao ("S" saída / "E" entrada), data.quantidade
+  const data = (body.data ?? {}) as Json;
+  const produto = (data.produto ?? {}) as Json;
+  const blingId =
+    pickId(produto, ["id"]) ?? pickId(data, ["produtoId", "idProduto", "id"]);
+  const operacao = typeof data.operacao === "string" ? data.operacao : "";
+  const quantidade = pickNum(data, ["quantidade"]) ?? 0;
 
   const dateStr = typeof body.date === "string" ? body.date : "";
   const ym = (dateStr || new Date().toISOString()).slice(0, 7); // YYYY-MM
 
-  const sku = await store.getSkuByBlingId(blingId);
-  const r = await store.recordStockBalance(blingId, sku, saldo, ym);
+  const sku = blingId ? await store.getSkuByBlingId(blingId) : null;
 
-  return NextResponse.json({ ok: true, sku, ...r });
+  // Movimento discreto = stock.created com operacao definida (S/E) e quantidade.
+  const isMovimento = event === "stock.created" && operacao !== "" && quantidade > 0;
+  let outcome = "sem movimento";
+  if (isMovimento && blingId) {
+    const r = await store.recordStockExit(blingId, sku, quantidade, ym, operacao);
+    outcome = r.recorded
+      ? `saída ${quantidade} registrada`
+      : operacao === "E"
+        ? "entrada (ignorada)"
+        : sku
+          ? "não registrada"
+          : "SKU não encontrado no cadastro";
+  }
+
+  // Rótulo do debug já mostra a leitura e o desfecho (facilita conferir no GET).
+  const label = `${event} [${sigLabel}] id=${blingId ?? "?"} sku=${sku ?? "?"} op=${operacao || "-"} q=${quantidade || "-"} → ${outcome}`;
+  await store.saveWebhookDebug(label, raw).catch(() => {});
+
+  return NextResponse.json({ ok: true, event, blingId, sku, operacao, quantidade, outcome });
 }

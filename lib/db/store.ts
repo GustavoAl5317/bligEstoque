@@ -133,6 +133,19 @@ export interface SettingsStore {
     newBalance: number,
     ym: string,
   ): Promise<{ exit: number; baseline: boolean }>;
+  /**
+   * Registra um movimento de estoque do webhook v3 (evento stock.created, que já
+   * traz operacao "S"/"E" e quantidade). Marca o produto como monitorado e, se for
+   * SAÍDA ("S") com sku resolvido, acumula a quantidade no mês. Não precisa de
+   * baseline. Retorna se a saída foi de fato registrada.
+   */
+  recordStockExit(
+    blingId: string,
+    sku: string | null,
+    qty: number,
+    ym: string,
+    operacao: string,
+  ): Promise<{ recorded: boolean }>;
   /** Resolve o SKU de um id interno do Bling (para o webhook). null se não achar. */
   getSkuByBlingId(blingId: string): Promise<string | null>;
   /** Consumo médio por SKU pelas saídas acumuladas (total ÷ nº de meses). */
@@ -282,6 +295,21 @@ class MemoryStore implements SettingsStore {
       return { exit: -delta, baseline: false };
     }
     return { exit: 0, baseline: false };
+  }
+  async recordStockExit(
+    blingId: string,
+    sku: string | null,
+    qty: number,
+    ym: string,
+    operacao: string,
+  ) {
+    this.stockLast.set(blingId, 0); // marca como monitorado
+    if (operacao === "S" && sku && qty > 0) {
+      const k = `${sku}|${ym}`;
+      this.stockExits.set(k, (this.stockExits.get(k) ?? 0) + qty);
+      return { recorded: true };
+    }
+    return { recorded: false };
   }
   async getSkuByBlingId(blingId: string) {
     const p = this.productCache.find((x) => x.blingId === blingId);
@@ -831,6 +859,31 @@ class PostgresStore implements SettingsStore {
         return { exit: -delta, baseline: false };
       }
       return { exit: 0, baseline: false };
+    });
+  }
+
+  async recordStockExit(
+    blingId: string,
+    sku: string | null,
+    qty: number,
+    ym: string,
+    operacao: string,
+  ) {
+    return this.run(async (sql) => {
+      // Marca o produto como monitorado (reaproveita stock_last como "visto").
+      await sql`
+        insert into stock_last (bling_id, balance, updated_at)
+        values (${blingId}, 0, now())
+        on conflict (bling_id) do update set updated_at = now()`;
+      if (operacao === "S" && sku && qty > 0) {
+        await sql`
+          insert into stock_exit_monthly (sku, ym, qty)
+          values (${sku}, ${ym}, ${qty})
+          on conflict (sku, ym) do update
+            set qty = stock_exit_monthly.qty + ${qty}`;
+        return { recorded: true };
+      }
+      return { recorded: false };
     });
   }
 
