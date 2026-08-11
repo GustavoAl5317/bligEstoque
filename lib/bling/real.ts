@@ -249,6 +249,38 @@ export class BlingApiDataSource implements BlingDataSource {
     return [...byId.values()];
   }
 
+  /** Lista os depósitos do Bling (id + descrição) — p/ identificar Geral x FULL. */
+  async listDepositos(): Promise<{ id: string; descricao: string; situacao: string }[]> {
+    const r = await this.get<{ data?: Json[] }>(`/depositos`);
+    return (r.data ?? []).map((d) => ({
+      id: str(d.id),
+      descricao: str(d.descricao, str(d.nome)),
+      situacao: str(d.situacao),
+    }));
+  }
+
+  /**
+   * Saldos de UM produto por depósito (para ver quanto tem em cada um).
+   * Usa GET /estoques/saldos?idsProdutos[]=... que devolve o detalhe por depósito.
+   */
+  async saldosPorDeposito(
+    blingProductId: string,
+  ): Promise<{ produtoId: string; depositos: { id: string; saldoFisico: number; saldoVirtual: number }[] }> {
+    const r = await this.get<{ data?: Json[] }>(
+      `/estoques/saldos?idsProdutos[]=${blingProductId}`,
+    );
+    const first = (r.data ?? [])[0] as Json | undefined;
+    const deps = (first?.depositos as Json[] | undefined) ?? [];
+    return {
+      produtoId: blingProductId,
+      depositos: deps.map((d) => ({
+        id: str((d.deposito as Json)?.id ?? d.id),
+        saldoFisico: num(d.saldoFisico),
+        saldoVirtual: num(d.saldoVirtual),
+      })),
+    };
+  }
+
   // ---- Sincronização (busca do Bling e grava no cache) ----
 
   /** Busca todos os produtos do Bling e regrava o cache. Retorna a quantidade. */
