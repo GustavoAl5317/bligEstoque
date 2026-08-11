@@ -13,17 +13,22 @@ export async function GET(req: NextRequest) {
   }
 
   const produtoId = req.nextUrl.searchParams.get("produtoId") ?? undefined;
+  const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+  // Cada chamada é isolada, pra sabermos qual permissão falta (uma pode funcionar
+  // e a outra não). 403 = o app do Bling não tem o escopo daquele recurso.
+  const out: Record<string, unknown> = {};
   try {
-    const [depositos, saldos] = await Promise.all([
-      bling.listDepositos(),
-      produtoId ? bling.saldosPorDeposito(produtoId) : Promise.resolve(null),
-    ]);
-    return NextResponse.json({ depositos, saldos_do_produto: saldos });
+    out.depositos = await bling.listDepositos();
   } catch (e) {
-    // Mostra o erro real (ex.: 403 = falta escopo/permissão no app do Bling).
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
-      { status: 200 },
-    );
+    out.depositos_erro = msg(e);
   }
+  if (produtoId) {
+    try {
+      out.saldos_do_produto = await bling.saldosPorDeposito(produtoId);
+    } catch (e) {
+      out.saldos_erro = msg(e);
+    }
+  }
+  return NextResponse.json(out);
 }
