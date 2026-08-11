@@ -13,10 +13,17 @@ export async function GET(req: NextRequest) {
   }
 
   const produtoId = req.nextUrl.searchParams.get("produtoId") ?? undefined;
-  const [depositos, saldos] = await Promise.all([
-    bling.listDepositos(),
-    produtoId ? bling.saldosPorDeposito(produtoId) : Promise.resolve(null),
-  ]);
-
-  return NextResponse.json({ depositos, saldos_do_produto: saldos });
+  try {
+    const [depositos, saldos] = await Promise.all([
+      bling.listDepositos(),
+      produtoId ? bling.saldosPorDeposito(produtoId) : Promise.resolve(null),
+    ]);
+    return NextResponse.json({ depositos, saldos_do_produto: saldos });
+  } catch (e) {
+    // Mostra o erro real (ex.: 403 = falta escopo/permissão no app do Bling).
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : String(e) },
+      { status: 200 },
+    );
+  }
 }
