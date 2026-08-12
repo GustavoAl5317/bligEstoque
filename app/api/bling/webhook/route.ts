@@ -84,20 +84,30 @@ export async function POST(req: NextRequest) {
   //   data.produto.id, data.operacao ("S" saída / "E" entrada), data.quantidade
   const data = (body.data ?? {}) as Json;
   const produto = (data.produto ?? {}) as Json;
+  const deposito = (data.deposito ?? {}) as Json;
   const blingId =
     pickId(produto, ["id"]) ?? pickId(data, ["produtoId", "idProduto", "id"]);
   const operacao = typeof data.operacao === "string" ? data.operacao : "";
   const quantidade = pickNum(data, ["quantidade"]) ?? 0;
+  const depositoId = pickId(deposito, ["id"]) ?? "";
 
   const dateStr = typeof body.date === "string" ? body.date : "";
   const ym = (dateStr || new Date().toISOString()).slice(0, 7); // YYYY-MM
 
   const sku = blingId ? await store.getSkuByBlingId(blingId) : null;
 
+  // Só conta o depósito GERAL (da loja) — igual aos relatórios da cliente. As
+  // saídas do FULL (Mercado Livre) e outros depósitos são ignoradas. O id do
+  // Geral é configurável por env; o padrão é o depósito com estoque real.
+  const GERAL = process.env.BLING_DEPOSITO_GERAL || "7530561683";
+  const ehGeral = depositoId === "" || depositoId === GERAL;
+
   // Movimento discreto = stock.created com operacao definida (S/E) e quantidade.
   const isMovimento = event === "stock.created" && operacao !== "" && quantidade > 0;
   let outcome = "sem movimento";
-  if (isMovimento && blingId) {
+  if (isMovimento && !ehGeral) {
+    outcome = "outro depósito (não conta)";
+  } else if (isMovimento && blingId) {
     const r = await store.recordStockExit(blingId, sku, quantidade, ym, operacao);
     outcome = r.recorded
       ? `saída ${quantidade} registrada`
@@ -109,8 +119,8 @@ export async function POST(req: NextRequest) {
   }
 
   // Rótulo do debug já mostra a leitura e o desfecho (facilita conferir no GET).
-  const label = `${event} [${sigLabel}] id=${blingId ?? "?"} sku=${sku ?? "?"} op=${operacao || "-"} q=${quantidade || "-"} → ${outcome}`;
+  const label = `${event} [${sigLabel}] id=${blingId ?? "?"} sku=${sku ?? "?"} dep=${depositoId || "-"} op=${operacao || "-"} q=${quantidade || "-"} → ${outcome}`;
   await store.saveWebhookDebug(label, raw).catch(() => {});
 
-  return NextResponse.json({ ok: true, event, blingId, sku, operacao, quantidade, outcome });
+  return NextResponse.json({ ok: true, event, blingId, sku, depositoId, operacao, quantidade, outcome });
 }
