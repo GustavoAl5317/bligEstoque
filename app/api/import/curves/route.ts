@@ -95,6 +95,8 @@ export async function POST(req: NextRequest) {
     byCurve[curve] = skus.length;
   }
 
+  await store.saveImportMeta('curves', bySku.size);
+
   return NextResponse.json({
     ok: true,
     sheet: usedSheet,

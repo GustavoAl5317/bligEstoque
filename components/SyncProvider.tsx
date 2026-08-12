@@ -156,15 +156,15 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
   const runProductSync = () =>
     run("Produtos e fornecedores", async (report) => {
-      report("Sincronizando produtos…");
+      report("Sincronizando produtos (busca por depósito Geral)…");
       const r1 = await fetch("/api/bling/sync", { method: "POST" });
       const d1 = await r1.json();
       if (!r1.ok) throw new Error(d1.error || "Falha ao sincronizar produtos.");
-      report(`${d1.count} produtos. Sincronizando fornecedores…`);
+      report(`${d1.count} produtos sincronizados. Atualizando fornecedores…`);
       const r2 = await fetch("/api/bling/sync-suppliers", { method: "POST" });
       const d2 = await r2.json();
       if (!r2.ok) throw new Error(d2.error || "Falha ao sincronizar fornecedores.");
-      report(`${d1.count} produtos e ${d2.count} com fornecedor atualizados.`);
+      report(`Concluído! ${d1.count} produtos e ${d2.count} fornecedores atualizados.`);
     });
 
   const runKitSync = () => run("Composição dos kits", kitLoop(true));

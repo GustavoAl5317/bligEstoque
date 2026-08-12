@@ -107,7 +107,17 @@ export interface KitComponent {
   qty: number;
 }
 
+/** Metadata de uma importação (quando foi, quantos registros). */
+export interface ImportMeta {
+  lastAt: string | null;
+  count: number;
+}
+
 export interface SettingsStore {
+  /** Salva a data/hora e contagem de uma importação (curvas, produção etc.). */
+  saveImportMeta(importType: string, count: number): Promise<void>;
+  /** Lê a metadata de uma importação pelo tipo. */
+  getImportMeta(importType: string): Promise<ImportMeta>;
   getProductCurves(): Promise<Record<string, Curve>>;
   setProductCurve(sku: string, curve: Curve): Promise<void>;
   /** Define a mesma curva para vários produtos de uma vez. */
@@ -244,6 +254,7 @@ class MemoryStore implements SettingsStore {
   private kitJob: KitJob | null = null;
   private kitComponents: KitComponent[] = [];
   private itemSales = new Map<string, number>(); // "sku|ym" -> qty
+  private importMeta = new Map<string, { lastAt: string; count: number }>();
 
   async getProductCurves() {
     return Object.fromEntries(this.curves);
@@ -565,6 +576,14 @@ class MemoryStore implements SettingsStore {
       };
     });
   }
+
+  async saveImportMeta(importType: string, count: number) {
+    this.importMeta.set(importType, { lastAt: new Date().toISOString(), count });
+  }
+  async getImportMeta(importType: string): Promise<ImportMeta> {
+    const m = this.importMeta.get(importType);
+    return m ? { lastAt: m.lastAt, count: m.count } : { lastAt: null, count: 0 };
+  }
 }
 
 // ---------- Implementação Postgres (produção) ----------
@@ -702,6 +721,11 @@ async function ensureSchema(url: string): Promise<void> {
           received_at timestamptz not null default now(),
           event text not null default '',
           raw text not null default ''
+        )`;
+        await sql`create table if not exists import_metadata (
+          import_type text primary key,
+          last_at timestamptz not null default now(),
+          count integer not null default 0
         )`;
       } finally {
         await sql.end({ timeout: 5 });
@@ -996,6 +1020,26 @@ class PostgresStore implements SettingsStore {
 
   async clearProductionIncoming() {
     await this.run((sql) => sql`truncate table production_incoming`);
+  }
+
+  async saveImportMeta(importType: string, count: number) {
+    await this.run(async (sql) => {
+      await sql`insert into import_metadata (import_type, last_at, count)
+        values (${importType}, now(), ${count})
+        on conflict (import_type) do update set last_at = now(), count = ${count}`;
+    });
+  }
+
+  getImportMeta(importType: string) {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ last_at: string; count: number }[]>`
+        select last_at, count from import_metadata where import_type = ${importType}`;
+      if (rows.length === 0) return { lastAt: null, count: 0 } as ImportMeta;
+      return {
+        lastAt: new Date(rows[0].last_at).toISOString(),
+        count: Number(rows[0].count),
+      } as ImportMeta;
+    }, { lastAt: null, count: 0 } as ImportMeta);
   }
 
   getBlingToken() {
@@ -1412,15 +1456,15 @@ class PostgresStore implements SettingsStore {
           supplier_code: string | null;
           supplier_desc: string | null;
         }[]
-      >`select pc.sku, pc.name, pc.cost, pc.price, pc.stock,
+      >`select pc.bling_id, pc.sku, pc.name, pc.cost, pc.price, pc.stock,
                coalesce(ps.supplier_id, pc.supplier_id) as supplier_id,
                coalesce(ps.supplier_name, pc.supplier_name) as supplier_name,
                ps.supplier_code as supplier_code,
                ps.supplier_desc as supplier_desc
           from product_cache pc
           left join product_supplier ps on ps.bling_id = pc.bling_id`;
-      return rows.map((r) => ({
-        blingId: "",
+      return rows.map((r: any) => ({
+        blingId: r.bling_id,
         sku: r.sku,
         name: r.name,
         cost: Number(r.cost),

@@ -15,6 +15,7 @@ export default function ProducaoPage() {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [lastImportedAt, setLastImportedAt] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function load() {
@@ -24,6 +25,7 @@ export default function ProducaoPage() {
       .then((d) => {
         setItems(d.items ?? []);
         setTotalUnits(d.totalUnits ?? 0);
+        setLastImportedAt(d.lastImportedAt ?? null);
       })
       .catch(() => setMsg("Não foi possível carregar."))
       .finally(() => setLoading(false));
@@ -119,7 +121,7 @@ export default function ProducaoPage() {
       </div>
 
       {/* Resumo */}
-      <div className="mb-4 grid grid-cols-2 gap-3">
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs uppercase tracking-wide text-slate-400">
             Produtos em produção
@@ -134,6 +136,16 @@ export default function ProducaoPage() {
           </div>
           <div className="mt-1 text-2xl font-semibold tabular-nums text-slate-800">
             {formatInt(totalUnits)}
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs uppercase tracking-wide text-slate-400">
+            Última importação
+          </div>
+          <div className="mt-1 text-lg font-semibold text-slate-800">
+            {lastImportedAt
+              ? new Date(lastImportedAt).toLocaleString("pt-BR")
+              : "—"}
           </div>
         </div>
       </div>

@@ -326,14 +326,13 @@ export class BlingApiDataSource implements BlingDataSource {
           str(p.situacao, "A").toUpperCase() === "A",
       )
       .map((p) => {
-        const estoque = (p.estoque as Json) ?? {};
         return {
           blingId: str(p.id),
           sku: str(p.codigo),
           name: str(p.nome, str(p.codigo)),
           cost: num(p.precoCusto),
           price: num(p.preco),
-          stock: num(estoque.saldoVirtualTotal, num(estoque.saldoFisicoTotal)),
+          stock: 0, // será preenchido abaixo por depósito
           supplierId: "",
           supplierName: "",
           supplierCode: "",
@@ -346,6 +345,49 @@ export class BlingApiDataSource implements BlingDataSource {
     const unique = cache.filter((p) =>
       seen.has(p.sku) ? false : (seen.add(p.sku), true),
     );
+
+    // Busca o saldo no depósito "Geral" para cada produto
+    const depositoGeralId = process.env.BLING_DEPOSITO_GERAL || "7530561683";
+    const batchSize = 20;
+    const batches = Math.ceil(unique.length / batchSize);
+    console.log(`[syncProducts] Buscando saldo por depósito... (${batches} lotes)`);
+
+    const byId = new Map<string, CachedProduct>();
+    for (const p of unique) {
+      byId.set(p.blingId, p);
+    }
+
+    for (let i = 0; i < unique.length; i += batchSize) {
+      const batch = unique.slice(i, i + batchSize);
+      const query = batch.map((p) => `idsProdutos[]=${p.blingId}`).join("&");
+      const started = Date.now();
+
+      try {
+        const r = await this.get<{ data?: Json[] }>(`/estoques/saldos?${query}`);
+        const saldos = r.data ?? [];
+        
+        for (const saldo of saldos) {
+          const produtoId = str(saldo.produtoId, str((saldo.produto as Json)?.id));
+          const p = byId.get(produtoId);
+          if (p) {
+            const depositos = (saldo.depositos as Json[]) ?? [];
+            const depGeral = depositos.find(
+              (d) => str((d.deposito as Json)?.id ?? d.id) === depositoGeralId
+            );
+            if (depGeral) {
+              p.stock = num(depGeral.saldoVirtual, num(depGeral.saldoFisico));
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`[syncProducts] Erro ao buscar lote de saldo (índice ${i}):`, err);
+      }
+      
+      const elapsed = Date.now() - started;
+      if (i + batchSize < unique.length && elapsed < 1100) {
+        await sleep(1100 - elapsed);
+      }
+    }
 
     await getStore().replaceProductCache(unique);
     return unique.length;

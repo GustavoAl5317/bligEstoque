@@ -43,12 +43,15 @@ const QTY_COLS = [
 
 // Lista o que está em produção (só os produtos com quantidade > 0).
 export async function GET() {
-  const rows = await getStore().getProductsForListing();
+  const store = getStore();
+  const rows = await store.getProductsForListing();
   const items = rows
     .filter((r) => r.inProduction > 0)
     .map((r) => ({ sku: r.sku, name: r.name, inProduction: r.inProduction }));
   const totalUnits = items.reduce((a, r) => a + r.inProduction, 0);
-  return NextResponse.json({ items, count: items.length, totalUnits });
+  
+  const meta = await store.getImportMeta('production');
+  return NextResponse.json({ items, count: items.length, totalUnits, lastImportedAt: meta.lastAt });
 }
 
 // Importa a planilha (SKU + quantidade) e substitui o "em produção".
@@ -96,6 +99,7 @@ export async function POST(req: NextRequest) {
 
   const entries = [...bySku.entries()].map(([sku, qty]) => ({ sku, qty }));
   await getStore().replaceProductionIncoming(entries);
+  await getStore().saveImportMeta('production', entries.length);
   const totalUnits = entries.reduce((a, e) => a + e.qty, 0);
   return NextResponse.json({ ok: true, count: entries.length, totalUnits });
 }
@@ -103,5 +107,6 @@ export async function POST(req: NextRequest) {
 // Zera o "em produção".
 export async function DELETE() {
   await getStore().clearProductionIncoming();
+  await getStore().saveImportMeta('production', 0);
   return NextResponse.json({ ok: true });
 }

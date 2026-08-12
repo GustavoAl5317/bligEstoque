@@ -57,6 +57,7 @@ export default function ProdutosPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [curveImportAt, setCurveImportAt] = useState<string | null>(null);
 
   function loadProducts() {
     fetch("/api/products")
@@ -66,6 +67,11 @@ export default function ProdutosPage() {
 
   useEffect(() => {
     loadProducts();
+    // Busca data da última importação de curvas.
+    fetch("/api/metadata/imports")
+      .then((r) => r.json())
+      .then((d) => setCurveImportAt(d.curves?.lastAt ?? null))
+      .catch(() => {});
   }, []);
 
   // Recarrega a lista quando uma sincronização global termina.
@@ -123,6 +129,7 @@ export default function ProdutosPage() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "Falha ao importar.");
       setImportMsg(`${formatInt(d.total)} curvas importadas da planilha.`);
+      setCurveImportAt(new Date().toISOString());
       loadProducts();
     } catch (e) {
       setImportMsg(e instanceof Error ? e.message : "Falha ao importar.");
@@ -316,6 +323,15 @@ export default function ProdutosPage() {
         <p className="mb-3 text-sm text-slate-500">
           <b className="text-slate-700">{formatInt(withConsumption)}</b> de{" "}
           {formatInt(rows.length)} produtos têm consumo registrado nos últimos 6 meses.
+        </p>
+      )}
+
+      {curveImportAt && (
+        <p className="mb-3 text-xs text-slate-400">
+          Última importação de curvas:{" "}
+          <span className="font-medium text-slate-500">
+            {new Date(curveImportAt).toLocaleString("pt-BR")}
+          </span>
         </p>
       )}
 
