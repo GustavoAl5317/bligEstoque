@@ -46,6 +46,14 @@ export async function GET() {
     const difCusto = round2(kitCusto - somaCusto);
     const difPreco = round2(kitPreco - somaPreco);
 
+    // Markup real do kit = preço de venda cadastrado ÷ custo REAL dos itens.
+    // É o que despenca quando os componentes sobem de preço e o kit não muda.
+    const markupKit = somaCusto > 0 && kitPreco > 0 ? kitPreco / somaCusto : null;
+    // Diferença % do preço do kit vs. a soma da venda dos itens ("deveria ser").
+    const difPrecoPct = somaPreco > 0 ? (kitPreco - somaPreco) / somaPreco : null;
+    // Sinal forte e inequívoco: o kit vende por MENOS que o custo real das peças.
+    const abaixoDoCusto = kitPreco > 0 && somaCusto > 0 && kitPreco < somaCusto;
+
     return {
       kit_sku: kitSku,
       kit_nome: kit?.name ?? "(kit fora do cadastro ativo)",
@@ -55,20 +63,25 @@ export async function GET() {
       preco_cadastrado: round2(kitPreco),
       preco_componentes: round2(somaPreco),
       dif_preco: difPreco,
-      // Defasado = preço de venda cadastrado difere da soma dos componentes.
-      defasado: Math.abs(difPreco) >= 0.01,
+      dif_preco_pct: difPrecoPct != null ? Math.round(difPrecoPct * 1000) / 10 : null,
+      markup_kit: markupKit != null ? Math.round(markupKit * 100) / 100 : null,
+      abaixo_do_custo: abaixoDoCusto,
       faltam_componentes: faltamComponentes,
       componentes,
     };
   });
 
-  // Mais defasados primeiro (maior diferença de preço em módulo).
-  linhas.sort((a, b) => Math.abs(b.dif_preco) - Math.abs(a.dif_preco));
+  // Pior primeiro: quem vende abaixo do custo, depois menor markup (margem menor).
+  linhas.sort((a, b) => {
+    if (a.abaixo_do_custo !== b.abaixo_do_custo) return a.abaixo_do_custo ? -1 : 1;
+    const ma = a.markup_kit ?? Infinity;
+    const mb = b.markup_kit ?? Infinity;
+    return ma - mb;
+  });
 
-  const defasados = linhas.filter((l) => l.defasado).length;
   return NextResponse.json({
     total_kits: linhas.length,
-    defasados,
+    abaixo_do_custo: linhas.filter((l) => l.abaixo_do_custo).length,
     kits: linhas,
   });
 }

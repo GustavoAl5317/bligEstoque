@@ -12,7 +12,9 @@ interface KitRow {
   preco_cadastrado: number;
   preco_componentes: number;
   dif_preco: number;
-  defasado: boolean;
+  dif_preco_pct: number | null;
+  markup_kit: number | null;
+  abaixo_do_custo: boolean;
   faltam_componentes: number;
   componentes: {
     sku: string;
@@ -23,12 +25,17 @@ interface KitRow {
   }[];
 }
 
+const PAGE_SIZE = 100;
+
 export default function KitsPrecosPage() {
   const [kits, setKits] = useState<KitRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const [onlyDefasados, setOnlyDefasados] = useState(true);
+  const [onlyAtencao, setOnlyAtencao] = useState(true);
+  // Diferença mínima (%) pra considerar o preço do kit "fora" da soma dos itens.
+  const [limitePct, setLimitePct] = useState(10);
   const [aberto, setAberto] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     fetch("/api/bling/kits-precos")
@@ -37,30 +44,45 @@ export default function KitsPrecosPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // "Atenção" = vende abaixo do custo (grave) OU preço bem diferente da soma.
+  function temAtencao(k: KitRow) {
+    if (k.abaixo_do_custo) return true;
+    return k.dif_preco_pct != null && Math.abs(k.dif_preco_pct) >= limitePct;
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return kits.filter(
       (k) =>
-        (!onlyDefasados || k.defasado) &&
+        (!onlyAtencao || temAtencao(k)) &&
         (q === "" ||
           k.kit_nome.toLowerCase().includes(q) ||
           k.kit_sku.toLowerCase().includes(q)),
     );
-  }, [kits, query, onlyDefasados]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kits, query, onlyAtencao, limitePct]);
 
-  const defasados = useMemo(() => kits.filter((k) => k.defasado).length, [kits]);
+  useEffect(() => setPage(1), [query, onlyAtencao, limitePct]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const abaixoCusto = useMemo(
+    () => kits.filter((k) => k.abaixo_do_custo).length,
+    [kits],
+  );
 
   function exportCsv() {
     const head = [
       "kit_sku",
       "kit_nome",
-      "custo_cadastrado",
       "custo_componentes",
-      "dif_custo",
       "preco_cadastrado",
+      "markup_kit",
       "preco_componentes",
       "dif_preco",
-      "defasado",
+      "dif_preco_pct",
+      "vende_abaixo_do_custo",
     ];
     const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
     const lines = [head.join(";")];
@@ -69,13 +91,13 @@ export default function KitsPrecosPage() {
         [
           k.kit_sku,
           k.kit_nome,
-          k.custo_cadastrado,
           k.custo_componentes,
-          k.dif_custo,
           k.preco_cadastrado,
+          k.markup_kit ?? "",
           k.preco_componentes,
           k.dif_preco,
-          k.defasado ? "SIM" : "nao",
+          k.dif_preco_pct ?? "",
+          k.abaixo_do_custo ? "SIM" : "nao",
         ]
           .map(esc)
           .join(";"),
@@ -98,10 +120,10 @@ export default function KitsPrecosPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Preços dos kits</h1>
           <p className="max-w-2xl text-sm text-slate-500">
-            Soma o <b>custo</b> e o <b>preço de venda</b> dos itens de cada kit (o que
-            ele <b>deveria</b> custar/vender) e compara com o valor <b>cadastrado</b> no
-            kit. Kits <b>defasados</b> = preço do kit diferente da soma dos itens
-            (ex.: mudou o preço da prata e o kit não foi atualizado).
+            Soma o <b>custo</b> e a <b>venda</b> dos itens de cada kit e compara com o
+            preço <b>cadastrado</b> no kit. O <b>markup</b> (venda ÷ custo dos itens) é
+            o que despenca quando as peças sobem de preço e o kit não é atualizado —
+            fique de olho nos que <b className="text-red-600">vendem abaixo do custo</b>.
           </p>
         </div>
         <button
@@ -124,37 +146,54 @@ export default function KitsPrecosPage() {
         <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600">
           <input
             type="checkbox"
-            checked={onlyDefasados}
-            onChange={(e) => setOnlyDefasados(e.target.checked)}
+            checked={onlyAtencao}
+            onChange={(e) => setOnlyAtencao(e.target.checked)}
             className="accent-brand"
           />
-          Só defasados
+          Só com atenção
+        </label>
+        <label className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600">
+          Diferença ≥
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={limitePct}
+            onChange={(e) => setLimitePct(Math.max(0, Number(e.target.value) || 0))}
+            className="w-14 rounded border border-slate-200 px-1 py-0.5 text-right tabular-nums outline-none focus:border-brand"
+          />
+          %
         </label>
       </div>
 
       {!loading && (
         <p className="mb-3 text-sm text-slate-500">
-          <b className="text-slate-700">{formatInt(defasados)}</b> kits defasados de{" "}
-          {formatInt(kits.length)} no total.
+          <b className="text-red-600">{formatInt(abaixoCusto)}</b> kits vendendo{" "}
+          <b>abaixo do custo</b> · {formatInt(kits.length)} kits no total.
         </p>
       )}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <table className="w-full min-w-[860px] text-sm">
+        <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-400">
               <th className="px-4 py-3 font-medium">Kit</th>
-              <th className="px-4 py-3 text-right font-medium">Custo cadastrado</th>
               <th className="px-4 py-3 text-right font-medium">Custo dos itens</th>
               <th className="px-4 py-3 text-right font-medium">Venda cadastrada</th>
+              <th className="px-4 py-3 text-right font-medium">Markup</th>
               <th className="px-4 py-3 text-right font-medium">Venda dos itens</th>
-              <th className="px-4 py-3 text-right font-medium">Diferença</th>
+              <th className="px-4 py-3 text-right font-medium">Dif. %</th>
               <th className="px-4 py-3 font-medium"></th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((k) => {
+            {pageRows.map((k) => {
               const aberta = aberto === k.kit_sku;
+              const markupCor = k.abaixo_do_custo
+                ? "text-red-600"
+                : k.markup_kit != null && k.markup_kit < 1.5
+                  ? "text-amber-600"
+                  : "text-slate-600";
               return (
                 <Fragment key={k.kit_sku}>
                   <tr
@@ -165,6 +204,11 @@ export default function KitsPrecosPage() {
                       <div className="font-medium text-slate-800">{k.kit_nome}</div>
                       <div className="text-xs text-slate-400">
                         {k.kit_sku}
+                        {k.abaixo_do_custo && (
+                          <span className="ml-2 font-semibold text-red-600">
+                            vende abaixo do custo
+                          </span>
+                        )}
                         {k.faltam_componentes > 0 && (
                           <span className="ml-2 text-amber-600">
                             ⚠ {k.faltam_componentes} item(ns) fora do cadastro
@@ -173,25 +217,21 @@ export default function KitsPrecosPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-600">
-                      {k.custo_cadastrado > 0 ? formatBRL(k.custo_cadastrado) : "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-600">
                       {formatBRL(k.custo_componentes)}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-600">
                       {k.preco_cadastrado > 0 ? formatBRL(k.preco_cadastrado) : "—"}
                     </td>
+                    <td className={`px-4 py-3 text-right font-semibold tabular-nums ${markupCor}`}>
+                      {k.markup_kit != null ? `${k.markup_kit.toFixed(2)}×` : "—"}
+                    </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-600">
                       {formatBRL(k.preco_componentes)}
                     </td>
-                    <td
-                      className={`px-4 py-3 text-right font-semibold tabular-nums ${
-                        k.defasado ? "text-red-600" : "text-emerald-600"
-                      }`}
-                    >
-                      {k.dif_preco === 0
-                        ? "ok"
-                        : `${k.dif_preco > 0 ? "+" : ""}${formatBRL(k.dif_preco)}`}
+                    <td className="px-4 py-3 text-right tabular-nums text-slate-500">
+                      {k.dif_preco_pct != null
+                        ? `${k.dif_preco_pct > 0 ? "+" : ""}${k.dif_preco_pct.toFixed(1)}%`
+                        : "—"}
                     </td>
                     <td className="px-4 py-3 text-right text-xs text-slate-400">
                       {aberta ? "▲" : "▼ itens"}
@@ -238,6 +278,35 @@ export default function KitsPrecosPage() {
           <div className="px-4 py-10 text-center text-sm text-slate-400">
             Nenhum kit encontrado. Se a lista estiver vazia, rode a{" "}
             <b>sincronização da composição dos kits</b> na tela Conexão.
+          </div>
+        )}
+
+        {filtered.length > PAGE_SIZE && (
+          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm text-slate-500">
+            <span>
+              {formatInt((page - 1) * PAGE_SIZE + 1)}–
+              {formatInt(Math.min(page * PAGE_SIZE, filtered.length))} de{" "}
+              {formatInt(filtered.length)}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 transition hover:border-slate-400 disabled:opacity-40"
+              >
+                Anterior
+              </button>
+              <span className="tabular-nums">
+                {page} / {totalPages}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 transition hover:border-slate-400 disabled:opacity-40"
+              >
+                Próxima
+              </button>
+            </div>
           </div>
         )}
       </div>
