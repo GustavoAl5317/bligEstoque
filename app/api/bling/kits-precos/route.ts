@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/db/store";
 
 // Relatório de PREÇOS DOS KITS.
@@ -6,12 +6,21 @@ import { getStore } from "@/lib/db/store";
 // "deveria" custar/vender) e compara com o valor cadastrado no próprio kit.
 // Serve pra achar kits DEFASADOS (preço não atualizado quando os componentes
 // mudaram de preço — ex.: oscilação da prata).
-export async function GET() {
+//
+// Os totais batem com o rodapé da aba "Estrutura" do Bling (Preço Total de
+// Custo / Preço Total de Venda). Use ?sku=CODIGO para conferir um kit só.
+export async function GET(req: NextRequest) {
   const store = getStore();
-  const [kits, produtos] = await Promise.all([
+  const filtroSku = req.nextUrl.searchParams.get("sku")?.trim() || null;
+  const [kitsAll, produtos] = await Promise.all([
     store.getKitComponents(), // kit_sku -> [{ sku, qty }]
     store.getCachedProducts(),
   ]);
+
+  // Se pediu um SKU específico, filtra só aquele kit (pra conferir com o Bling).
+  const kits = filtroSku
+    ? Object.fromEntries(Object.entries(kitsAll).filter(([sku]) => sku === filtroSku))
+    : kitsAll;
 
   // Mapa rápido sku -> { name, cost, price }.
   const bySku = new Map(
