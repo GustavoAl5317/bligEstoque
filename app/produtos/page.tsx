@@ -44,6 +44,8 @@ export default function ProdutosPage() {
   const [query, setQuery] = useState("");
   const [supplier, setSupplier] = useState("");
   const [onlyConsumption, setOnlyConsumption] = useState(false);
+  // "" = todas · "__none__" = não classificados · senão, a curva escolhida.
+  const [curveFilter, setCurveFilter] = useState<string>("");
   const [page, setPage] = useState(1);
   const sync = useSync();
   const [importing, setImporting] = useState(false);
@@ -88,15 +90,19 @@ export default function ProdutosPage() {
       (r) =>
         (s === "" || r.supplierName.toLowerCase().includes(s)) &&
         (!onlyConsumption || r.monthlyConsumption > 0) &&
+        (curveFilter === "" ||
+          (curveFilter === "__none__"
+            ? r.curve == null
+            : r.curve === curveFilter)) &&
         (q === "" ||
           r.name.toLowerCase().includes(q) ||
           r.sku.toLowerCase().includes(q)),
     );
-  }, [rows, supplier, query, onlyConsumption]);
+  }, [rows, supplier, query, onlyConsumption, curveFilter]);
 
   useEffect(() => {
     setPage(1);
-  }, [query, supplier, onlyConsumption]);
+  }, [query, supplier, onlyConsumption, curveFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -281,6 +287,20 @@ export default function ProdutosPage() {
           onChange={(e) => setQuery(e.target.value)}
           className="min-w-[200px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand sm:max-w-xs"
         />
+        <select
+          value={curveFilter}
+          onChange={(e) => setCurveFilter(e.target.value)}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 outline-none focus:border-brand"
+          title="Filtrar por curva"
+        >
+          <option value="">Todas as curvas</option>
+          <option value="__none__">Não classificados</option>
+          {CURVES.map((c) => (
+            <option key={c} value={c}>
+              Curva {CURVE_META[c].label}
+            </option>
+          ))}
+        </select>
         <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600">
           <input
             type="checkbox"

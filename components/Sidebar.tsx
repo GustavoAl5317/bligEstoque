@@ -52,6 +52,19 @@ const links = [
     ),
   },
   {
+    href: "/kits-precos",
+    label: "Preços dos kits",
+    desc: "Kits defasados",
+    icon: (
+      <path
+        d="M3 7l9-4 9 4-9 4-9-4zM3 7v10l9 4 9-4V7M12 11v10"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    ),
+  },
+  {
     href: "/producao",
     label: "Em produção",
     desc: "Somar ao estoque",
