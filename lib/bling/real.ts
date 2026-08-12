@@ -281,6 +281,33 @@ export class BlingApiDataSource implements BlingDataSource {
     };
   }
 
+  /**
+   * Diagnóstico: pega a 1ª página de /produtos e diz se o campo "situacao" vem
+   * na listagem e quais valores aparecem. Se "situacao" não vier, o filtro de
+   * ativos falha aberto (deixa inativo passar).
+   */
+  async debugProdutosSituacao(): Promise<{
+    total_na_pagina: number;
+    tem_campo_situacao: boolean;
+    campos_do_item: string[];
+    contagem_situacao: Record<string, number>;
+  }> {
+    const r = await this.get<{ data?: Json[] }>(`/produtos?pagina=1&limite=100`);
+    const data = r.data ?? [];
+    const first = (data[0] ?? {}) as Json;
+    const counts: Record<string, number> = {};
+    for (const p of data) {
+      const s = "situacao" in p ? String((p as Json).situacao) : "(campo ausente)";
+      counts[s] = (counts[s] ?? 0) + 1;
+    }
+    return {
+      total_na_pagina: data.length,
+      tem_campo_situacao: "situacao" in first,
+      campos_do_item: Object.keys(first),
+      contagem_situacao: counts,
+    };
+  }
+
   // ---- Sincronização (busca do Bling e grava no cache) ----
 
   /** Busca todos os produtos do Bling e regrava o cache. Retorna a quantidade. */
