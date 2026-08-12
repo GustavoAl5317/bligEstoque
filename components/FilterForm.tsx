@@ -57,7 +57,11 @@ export function FilterForm({
     [suppliers],
   );
   const curveOptions: Option[] = useMemo(
-    () => curves.map((c) => ({ id: c, label: `Curva ${c}` })),
+    () => [
+      ...curves.map((c) => ({ id: c, label: `Curva ${c}` })),
+      // Permite incluir explicitamente os produtos SEM curva ao filtrar.
+      { id: "__none__", label: "Sem classificação" },
+    ],
     [curves],
   );
   const productOptions: Option[] = useMemo(

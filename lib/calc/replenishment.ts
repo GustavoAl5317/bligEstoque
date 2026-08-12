@@ -141,11 +141,13 @@ export function calcReplenishment(
 
   const rows = products
     .filter((p) => filters.supplierIds.length === 0 || filters.supplierIds.includes(p.supplierId))
-    .filter(
-      (p) =>
-        filters.curves.length === 0 ||
-        (p.curve != null && filters.curves.includes(p.curve)),
-    )
+    .filter((p) => {
+      // Sem curva selecionada = todos (inclui os não classificados).
+      if (filters.curves.length === 0) return true;
+      // "__none__" incluído = trazer também os produtos sem classificação.
+      if (p.curve == null) return filters.curves.includes("__none__");
+      return filters.curves.includes(p.curve);
+    })
     .filter((p) => skuSet.size === 0 || skuSet.has(p.sku))
     .map((p) => {
       const supplier = supplierById.get(p.supplierId);
