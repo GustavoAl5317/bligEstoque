@@ -225,7 +225,13 @@ export default function KitsPrecosPage() {
                     <td className={`px-4 py-3 text-right font-semibold tabular-nums ${markupCor}`}>
                       {k.markup_kit != null ? `${k.markup_kit.toFixed(2)}×` : "—"}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-600">
+                    <td className={`px-4 py-3 text-right tabular-nums ${
+                      k.preco_cadastrado > 0 && k.preco_cadastrado > k.preco_componentes
+                        ? "font-bold text-green-600"
+                        : k.preco_cadastrado > 0 && k.preco_cadastrado < k.preco_componentes
+                          ? "font-bold text-red-600"
+                          : "text-slate-800"
+                    }`}>
                       {k.preco_cadastrado > 0 ? formatBRL(k.preco_cadastrado) : "—"}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-500">
