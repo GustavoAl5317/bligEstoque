@@ -100,6 +100,20 @@ export interface KitJob {
   updatedAt?: string;
 }
 
+export interface ProductJob {
+  nextPage: number;
+  processed: number;
+  done: boolean;
+  updatedAt?: string;
+}
+
+export interface SupplierJob {
+  nextPage: number;
+  processed: number;
+  done: boolean;
+  updatedAt?: string;
+}
+
 /** Ligação kit → componente (item que forma o kit). */
 export interface KitComponent {
   kitSku: string;
@@ -184,11 +198,21 @@ export interface SettingsStore {
   getBlingToken(): Promise<BlingToken | null>;
   saveBlingToken(token: BlingToken): Promise<void>;
   clearBlingToken(): Promise<void>;
-  replaceProductCache(products: CachedProduct[]): Promise<void>;
   getCachedProducts(): Promise<CachedProduct[]>;
+  getProductJob(): Promise<ProductJob | null>;
+  startProductJob(): Promise<void>;
+  saveProductProgress(job: ProductJob): Promise<void>;
+  truncateProductCache(): Promise<void>;
+  upsertProductCacheChunk(products: CachedProduct[]): Promise<void>;
+
+  getSupplierJob(): Promise<SupplierJob | null>;
+  startSupplierJob(): Promise<void>;
+  saveSupplierProgress(job: SupplierJob): Promise<void>;
+  truncateProductSuppliers(): Promise<void>;
+  upsertProductSupplierChunk(links: ProductSupplierLink[]): Promise<void>;
+
   /** Lista pronta para a tela de curvas (uma consulta só, com tudo junto). */
   getProductsForListing(): Promise<ProductListing[]>;
-  replaceProductSuppliers(links: ProductSupplierLink[]): Promise<void>;
 
   // Cálculo de consumo pelas vendas (processado em etapas).
   getConsumptionJob(): Promise<ConsumptionJob | null>;
@@ -396,15 +420,23 @@ class MemoryStore implements SettingsStore {
   async clearBlingToken() {
     this.token = null;
   }
-  async replaceProductCache(products: CachedProduct[]) {
-    // Upsert por SKU: atualiza os existentes e adiciona os novos (não apaga).
-    const bySku = new Map(this.productCache.map((p) => [p.sku, p]));
-    for (const p of products) bySku.set(p.sku, p);
-    this.productCache = [...bySku.values()];
+  async getProductJob() { return null; }
+  async startProductJob() {}
+  async saveProductProgress() {}
+  async truncateProductCache() { this.productCache = []; }
+  async upsertProductCacheChunk(products: CachedProduct[]) {
+    // Para simplificar no dev, apenas joga no array (sem dedup perfeito de sku)
+    this.productCache.push(...products);
   }
-  async replaceProductSuppliers(links: ProductSupplierLink[]) {
-    this.supplierLinks = new Map(links.map((l) => [l.blingId, l]));
+
+  async getSupplierJob() { return null; }
+  async startSupplierJob() {}
+  async saveSupplierProgress() {}
+  async truncateProductSuppliers() { this.supplierLinks.clear(); }
+  async upsertProductSupplierChunk(links: ProductSupplierLink[]) {
+    for (const l of links) this.supplierLinks.set(l.blingId, l);
   }
+
   async getConsumptionJob() {
     return this.job;
   }
@@ -726,6 +758,20 @@ async function ensureSchema(url: string): Promise<void> {
           import_type text primary key,
           last_at timestamptz not null default now(),
           count integer not null default 0
+        )`;
+        await sql`create table if not exists product_job (
+          id text primary key default 'current',
+          next_page integer not null default 1,
+          processed integer not null default 0,
+          done boolean not null default false,
+          updated_at timestamptz not null default now()
+        )`;
+        await sql`create table if not exists supplier_job (
+          id text primary key default 'current',
+          next_page integer not null default 1,
+          processed integer not null default 0,
+          done boolean not null default false,
+          updated_at timestamptz not null default now()
         )`;
       } finally {
         await sql.end({ timeout: 5 });
@@ -1074,10 +1120,43 @@ class PostgresStore implements SettingsStore {
     await this.run((sql) => sql`delete from bling_oauth where id = 'default'`);
   }
 
-  async replaceProductCache(products: CachedProduct[]) {
+  async getProductJob() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ next_page: number; processed: number; done: boolean; updated_at: string }[]>`
+        select next_page, processed, done, updated_at from product_job where id = 'current'`;
+      if (rows.length === 0) return null;
+      return {
+        nextPage: rows[0].next_page,
+        processed: rows[0].processed,
+        done: rows[0].done,
+        updatedAt: new Date(rows[0].updated_at).toISOString(),
+      } as ProductJob;
+    }, null);
+  }
+
+  async startProductJob() {
+    await this.run(sql => sql`
+      insert into product_job (id, next_page, processed, done, updated_at)
+      values ('current', 1, 0, false, now())
+      on conflict (id) do update set
+        next_page = 1, processed = 0, done = false, updated_at = now()
+    `);
+  }
+
+  async saveProductProgress(job: ProductJob) {
+    await this.run(sql => sql`
+      update product_job
+      set next_page = ${job.nextPage}, processed = ${job.processed}, done = ${job.done}, updated_at = now()
+      where id = 'current'
+    `);
+  }
+
+  async truncateProductCache() {
+    await this.run(sql => sql`truncate table product_cache`);
+  }
+
+  async upsertProductCacheChunk(products: CachedProduct[]) {
     await this.run(async (sql) => {
-      // Upsert por SKU: atualiza estoque/preço dos existentes e adiciona novos,
-      // sem apagar nada. Não toca em curvas/consumo (tabelas separadas).
       const CHUNK = 500;
       for (let i = 0; i < products.length; i += CHUNK) {
         const slice = products.slice(i, i + CHUNK).map((p) => ({
@@ -1112,9 +1191,43 @@ class PostgresStore implements SettingsStore {
     });
   }
 
-  async replaceProductSuppliers(links: ProductSupplierLink[]) {
+  async getSupplierJob() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ next_page: number; processed: number; done: boolean; updated_at: string }[]>`
+        select next_page, processed, done, updated_at from supplier_job where id = 'current'`;
+      if (rows.length === 0) return null;
+      return {
+        nextPage: rows[0].next_page,
+        processed: rows[0].processed,
+        done: rows[0].done,
+        updatedAt: new Date(rows[0].updated_at).toISOString(),
+      } as SupplierJob;
+    }, null);
+  }
+
+  async startSupplierJob() {
+    await this.run(sql => sql`
+      insert into supplier_job (id, next_page, processed, done, updated_at)
+      values ('current', 1, 0, false, now())
+      on conflict (id) do update set
+        next_page = 1, processed = 0, done = false, updated_at = now()
+    `);
+  }
+
+  async saveSupplierProgress(job: SupplierJob) {
+    await this.run(sql => sql`
+      update supplier_job
+      set next_page = ${job.nextPage}, processed = ${job.processed}, done = ${job.done}, updated_at = now()
+      where id = 'current'
+    `);
+  }
+
+  async truncateProductSuppliers() {
+    await this.run(sql => sql`truncate table product_supplier`);
+  }
+
+  async upsertProductSupplierChunk(links: ProductSupplierLink[]) {
     await this.run(async (sql) => {
-      await sql`truncate table product_supplier`;
       const CHUNK = 500;
       for (let i = 0; i < links.length; i += CHUNK) {
         const slice = links.slice(i, i + CHUNK).map((l) => ({
@@ -1131,7 +1244,12 @@ class PostgresStore implements SettingsStore {
           "supplier_name",
           "supplier_code",
           "supplier_desc",
-        )}`;
+        )}
+        on conflict (bling_id) do update set
+          supplier_id = excluded.supplier_id,
+          supplier_name = excluded.supplier_name,
+          supplier_code = excluded.supplier_code,
+          supplier_desc = excluded.supplier_desc`;
       }
     });
   }

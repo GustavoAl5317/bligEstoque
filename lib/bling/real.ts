@@ -310,15 +310,36 @@ export class BlingApiDataSource implements BlingDataSource {
 
   // ---- Sincronização (busca do Bling e grava no cache) ----
 
-  /** Busca todos os produtos do Bling e regrava o cache. Retorna a quantidade. */
-  async syncProducts(): Promise<number> {
-    const produtos = await this.paginate(
-      (page) => `/produtos?pagina=${page}&limite=${PAGE_LIMIT}`,
+  /** Inicia a sincronização de produtos (zera cache e começa da página 1). */
+  async startProductSync(): Promise<void> {
+    const store = getStore();
+    await store.startProductJob();
+    await store.truncateProductCache();
+  }
+
+  /**
+   * Processa UMA página de produtos (100): busca a listagem, mapeia para cache,
+   * resolve saldo por depósito e salva no banco.
+   */
+  async processProductChunk(): Promise<{ done: boolean; processed: number }> {
+    const store = getStore();
+    const job = await store.getProductJob();
+    if (!job) throw new Error("Nenhuma sincronização de produtos em andamento.");
+    if (job.done) return { done: true, processed: job.processed };
+
+    const res = await this.get<{ data?: Json[] }>(
+      `/produtos?pagina=${job.nextPage}&limite=${PAGE_LIMIT}`,
     );
+    const produtos = res.data ?? [];
+
+    if (produtos.length === 0) {
+      job.done = true;
+      await store.saveProductProgress(job);
+      return { done: true, processed: job.processed };
+    }
 
     const cache: CachedProduct[] = produtos
       // Só produtos (tipo P), com código, e ATIVOS (situacao "A").
-      // Bling: situacao "A" = Ativo, "I" = Inativo, "E" = Excluído.
       .filter(
         (p) =>
           str(p.tipo, "P") === "P" &&
@@ -349,8 +370,6 @@ export class BlingApiDataSource implements BlingDataSource {
     // Busca o saldo no depósito "Geral" para cada produto
     const depositoGeralId = process.env.BLING_DEPOSITO_GERAL || "7530561683";
     const batchSize = 20;
-    const batches = Math.ceil(unique.length / batchSize);
-    console.log(`[syncProducts] Buscando saldo por depósito... (${batches} lotes)`);
 
     const byId = new Map<string, CachedProduct>();
     for (const p of unique) {
@@ -380,7 +399,7 @@ export class BlingApiDataSource implements BlingDataSource {
           }
         }
       } catch (err) {
-        console.error(`[syncProducts] Erro ao buscar lote de saldo (índice ${i}):`, err);
+        console.error(`[processProductChunk] Erro ao buscar lote de saldo (índice ${i}):`, err);
       }
       
       const elapsed = Date.now() - started;
@@ -389,20 +408,43 @@ export class BlingApiDataSource implements BlingDataSource {
       }
     }
 
-    await getStore().replaceProductCache(unique);
-    return unique.length;
+    await store.upsertProductCacheChunk(unique);
+    
+    job.nextPage++;
+    job.processed += unique.length;
+    await store.saveProductProgress(job);
+
+    return { done: false, processed: job.processed };
+  }
+
+  /** Inicia a sincronização de fornecedores (zera a tabela e começa da página 1). */
+  async startSupplierSync(): Promise<void> {
+    const store = getStore();
+    await store.startSupplierJob();
+    await store.truncateProductSuppliers();
   }
 
   /**
-   * Busca as ligações produto→fornecedor (/produtos/fornecedores), resolve o
-   * nome de cada fornecedor e grava no banco. Retorna quantos produtos ficaram
-   * com fornecedor.
+   * Processa UMA página de links produto→fornecedor, busca o nome do fornecedor
+   * e salva no banco em chunk.
    */
-  async syncSuppliers(): Promise<number> {
-    // 1) Todas as ligações produto→fornecedor (prioriza o fornecedor padrão).
-    const rows = await this.paginate(
-      (page) => `/produtos/fornecedores?pagina=${page}&limite=${PAGE_LIMIT}`,
+  async processSupplierChunk(): Promise<{ done: boolean; processed: number }> {
+    const store = getStore();
+    const job = await store.getSupplierJob();
+    if (!job) throw new Error("Nenhuma sincronização de fornecedores em andamento.");
+    if (job.done) return { done: true, processed: job.processed };
+
+    const res = await this.get<{ data?: Json[] }>(
+      `/produtos/fornecedores?pagina=${job.nextPage}&limite=${PAGE_LIMIT}`,
     );
+    const rows = res.data ?? [];
+
+    if (rows.length === 0) {
+      job.done = true;
+      await store.saveSupplierProgress(job);
+      return { done: true, processed: job.processed };
+    }
+
     const linkByProduct = new Map<
       string,
       { supplierId: string; padrao: boolean; code: string; desc: string }
@@ -452,8 +494,13 @@ export class BlingApiDataSource implements BlingDataSource {
       supplierCode: l.code,
       supplierDesc: l.desc,
     }));
-    await getStore().replaceProductSuppliers(links);
-    return links.length;
+    await store.upsertProductSupplierChunk(links);
+    
+    job.nextPage++;
+    job.processed += links.length;
+    await store.saveSupplierProgress(job);
+
+    return { done: false, processed: job.processed };
   }
 
   // ---- Composições de kits (para decompor o consumo) ----

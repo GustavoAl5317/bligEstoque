@@ -1,16 +1,26 @@
 import { NextResponse } from "next/server";
 import { tryCreateBlingDataSource } from "@/lib/bling/real";
+import { getStore } from "@/lib/db/store";
 
 export const maxDuration = 60;
 
-export async function POST() {
+export async function GET() {
+  const job = await getStore().getSupplierJob();
+  return NextResponse.json({ job });
+}
+
+export async function POST(req: Request) {
   const ds = await tryCreateBlingDataSource();
   if (!ds) {
     return NextResponse.json({ error: "Não conectado ao Bling." }, { status: 400 });
   }
   try {
-    const count = await ds.syncSuppliers();
-    return NextResponse.json({ ok: true, count });
+    const body = await req.json().catch(() => ({}));
+    if (body.restart) {
+      await ds.startSupplierSync();
+    }
+    const r = await ds.processSupplierChunk();
+    return NextResponse.json({ ok: true, ...r });
   } catch (e) {
     console.error("Sync fornecedores falhou:", e);
     return NextResponse.json(
