@@ -179,9 +179,9 @@ export default function KitsPrecosPage() {
             <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-400">
               <th className="px-4 py-3 font-medium">Kit</th>
               <th className="px-4 py-3 text-right font-medium">Custo dos itens</th>
-              <th className="px-4 py-3 text-right font-medium">Venda cadastrada</th>
-              <th className="px-4 py-3 text-right font-medium">Markup</th>
               <th className="px-4 py-3 text-right font-medium">Venda dos itens</th>
+              <th className="px-4 py-3 text-right font-medium">Markup</th>
+              <th className="px-4 py-3 text-right font-medium">Preço venda</th>
               <th className="px-4 py-3 text-right font-medium">Dif. %</th>
               <th className="px-4 py-3 font-medium"></th>
             </tr>
@@ -220,13 +220,13 @@ export default function KitsPrecosPage() {
                       {formatBRL(k.custo_componentes)}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-600">
-                      {k.preco_cadastrado > 0 ? formatBRL(k.preco_cadastrado) : "—"}
+                      {formatBRL(k.preco_componentes)}
                     </td>
                     <td className={`px-4 py-3 text-right font-semibold tabular-nums ${markupCor}`}>
                       {k.markup_kit != null ? `${k.markup_kit.toFixed(2)}×` : "—"}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-600">
-                      {formatBRL(k.preco_componentes)}
+                      {k.preco_cadastrado > 0 ? formatBRL(k.preco_cadastrado) : "—"}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-500">
                       {k.dif_preco_pct != null
