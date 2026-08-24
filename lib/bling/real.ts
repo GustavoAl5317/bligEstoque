@@ -308,6 +308,28 @@ export class BlingApiDataSource implements BlingDataSource {
     };
   }
 
+  /**
+   * Busca no Bling um produto pelo CÓDIGO (SKU). Mostra tipo/situação — pra
+   * entender por que um SKU não aparece no cadastro (inativo? não é produto?).
+   */
+  async buscarProdutoPorCodigo(codigo: string): Promise<
+    { id: string; codigo: string; nome: string; tipo: string; situacao: string }[]
+  > {
+    const r = await this.get<{ data?: Json[] }>(
+      `/produtos?codigo=${encodeURIComponent(codigo)}&limite=100`,
+    );
+    // Filtra pelo código exato (a API pode fazer busca "contém").
+    return (r.data ?? [])
+      .filter((p) => str(p.codigo) === codigo)
+      .map((p) => ({
+        id: str(p.id),
+        codigo: str(p.codigo),
+        nome: str(p.nome),
+        tipo: str(p.tipo),
+        situacao: str(p.situacao),
+      }));
+  }
+
   // ---- Sincronização (busca do Bling e grava no cache) ----
 
   /** Inicia a sincronização de produtos (zera cache e começa da página 1). */
