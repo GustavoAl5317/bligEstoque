@@ -7,11 +7,13 @@ interface Item {
   sku: string;
   name: string;
   inProduction: number;
+  matched?: boolean;
 }
 
 export default function ProducaoPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [totalUnits, setTotalUnits] = useState(0);
+  const [semCadastro, setSemCadastro] = useState(0);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -25,6 +27,7 @@ export default function ProducaoPage() {
       .then((d) => {
         setItems(d.items ?? []);
         setTotalUnits(d.totalUnits ?? 0);
+        setSemCadastro(d.semCadastro ?? 0);
         setLastImportedAt(d.lastImportedAt ?? null);
       })
       .catch(() => setMsg("Não foi possível carregar."))
@@ -120,6 +123,17 @@ export default function ProducaoPage() {
         <b>modelo</b> acima para começar.
       </div>
 
+      {semCadastro > 0 && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <b>Atenção:</b> {formatInt(semCadastro)} SKU(s) da planilha{" "}
+          <b>não têm produto ativo no cadastro</b> (aparecem em laranja abaixo).
+          Esses <b>não são somados ao estoque</b> no cálculo da compra. Costuma
+          ser SKU digitado diferente do Bling, produto inativo, ou o cadastro de
+          produtos ainda não sincronizado. Confira o código ou sincronize os
+          produtos.
+        </div>
+      )}
+
       {/* Resumo */}
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -160,9 +174,16 @@ export default function ProducaoPage() {
           </thead>
           <tbody>
             {items.map((it) => (
-              <tr key={it.sku} className="border-b border-slate-50">
+              <tr
+                key={it.sku}
+                className={`border-b border-slate-50 ${it.matched === false ? "bg-amber-50" : ""}`}
+              >
                 <td className="px-4 py-3">
-                  <div className="font-medium text-slate-800">{it.name || it.sku}</div>
+                  <div
+                    className={`font-medium ${it.matched === false ? "text-amber-700" : "text-slate-800"}`}
+                  >
+                    {it.name || it.sku}
+                  </div>
                   <div className="text-xs text-slate-400">{it.sku}</div>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-700">

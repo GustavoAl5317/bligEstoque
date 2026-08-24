@@ -41,17 +41,38 @@ const QTY_COLS = [
   "quantidade em produção",
 ];
 
-// Lista o que está em produção (só os produtos com quantidade > 0).
+// Lista o que está em produção. Mostra TUDO que foi importado (fonte real:
+// production_incoming), com o nome do produto quando existe no cadastro — e
+// marca os que NÃO casam com um produto ativo (esses não somam ao estoque no
+// cálculo da compra, então é sinal de SKU errado ou cadastro desatualizado).
 export async function GET() {
   const store = getStore();
-  const rows = await store.getProductsForListing();
-  const items = rows
-    .filter((r) => r.inProduction > 0)
-    .map((r) => ({ sku: r.sku, name: r.name, inProduction: r.inProduction }));
+  const [prod, listing, meta] = await Promise.all([
+    store.getProductionIncoming(), // { sku: qty } — o que foi importado
+    store.getProductsForListing(),
+    store.getImportMeta("production"),
+  ]);
+  const nameBySku = new Map(listing.map((r) => [r.sku, r.name]));
+
+  const items = Object.entries(prod)
+    .map(([sku, qty]) => ({
+      sku,
+      name: nameBySku.get(sku) ?? "(SKU fora do cadastro de produtos)",
+      inProduction: qty,
+      matched: nameBySku.has(sku),
+    }))
+    .sort((a, b) => b.inProduction - a.inProduction);
+
   const totalUnits = items.reduce((a, r) => a + r.inProduction, 0);
-  
-  const meta = await store.getImportMeta('production');
-  return NextResponse.json({ items, count: items.length, totalUnits, lastImportedAt: meta.lastAt });
+  const semCadastro = items.filter((i) => !i.matched).length;
+  return NextResponse.json({
+    items,
+    count: items.length,
+    matched: items.length - semCadastro,
+    semCadastro,
+    totalUnits,
+    lastImportedAt: meta.lastAt,
+  });
 }
 
 // Importa a planilha (SKU + quantidade) e substitui o "em produção".
