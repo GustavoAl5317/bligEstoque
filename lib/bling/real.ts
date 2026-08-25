@@ -330,6 +330,61 @@ export class BlingApiDataSource implements BlingDataSource {
       }));
   }
 
+  /** Requisição de ESCRITA (PATCH/PUT/POST) autenticada. Retorna status + corpo. */
+  private async mutate(
+    method: string,
+    path: string,
+    body: unknown,
+  ): Promise<{ status: number; ok: boolean; body: unknown }> {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: body == null ? undefined : JSON.stringify(body),
+      cache: "no-store",
+    });
+    let parsed: unknown = null;
+    try {
+      parsed = await res.json();
+    } catch {
+      /* sem corpo */
+    }
+    return { status: res.status, ok: res.ok, body: parsed };
+  }
+
+  /**
+   * Teste de ESCRITA seguro: define a situação do produto para a MESMA que ele
+   * já tem (não muda nada) só pra provar que o token tem permissão de escrita.
+   * 200 = escreve; 403 = sem escopo de escrita.
+   */
+  async testarEscrita(codigo: string): Promise<{
+    encontrado: boolean;
+    produto?: { id: string; codigo: string; situacao: string };
+    http_status?: number;
+    escrita_liberada?: boolean;
+    resposta?: unknown;
+  }> {
+    const achados = await this.buscarProdutoPorCodigo(codigo);
+    if (achados.length === 0) return { encontrado: false };
+    const p = achados[0];
+    if (!p.situacao) return { encontrado: true, produto: p, resposta: "sem situação p/ testar" };
+    // Idempotente: mesma situação atual → não altera nada no Bling.
+    const r = await this.mutate("PATCH", "/produtos/situacoes", {
+      idsProdutos: [Number(p.id)],
+      situacao: p.situacao,
+    });
+    return {
+      encontrado: true,
+      produto: { id: p.id, codigo: p.codigo, situacao: p.situacao },
+      http_status: r.status,
+      escrita_liberada: r.ok,
+      resposta: r.body,
+    };
+  }
+
   // ---- Sincronização (busca do Bling e grava no cache) ----
 
   /** Inicia a sincronização de produtos (zera cache e começa da página 1). */
