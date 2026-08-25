@@ -38,6 +38,13 @@ export default function PrecificacaoPage() {
   const [config, setConfig] = useState<PricingConfig | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [resumo, setResumo] = useState<Resumo | null>(null);
+  const [diag, setDiag] = useState<{
+    total: number;
+    com_curva: number;
+    com_prazo_fornecedor: number;
+    com_serie_de_vendas: number;
+    com_estoque: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -61,6 +68,7 @@ export default function PrecificacaoPage() {
       .then((d) => {
         setRows(d.rows ?? []);
         setResumo(d.resumo ?? null);
+        setDiag(d.diagnostico ?? null);
       })
       .catch(() => setMsg("Não foi possível calcular."))
       .finally(() => setLoading(false));
@@ -215,6 +223,33 @@ export default function PrecificacaoPage() {
 
       {tab === "sugestoes" ? (
         <>
+          {resumo &&
+            diag &&
+            resumo.promover + resumo.revisao + resumo.fora === 0 &&
+            resumo.total > 0 && (
+              <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <b>Nenhum produto foi calculado.</b> O cálculo precisa de: <b>curva</b>,{" "}
+                <b>prazo do fornecedor</b> e <b>série de vendas</b>. Cobertura atual dos{" "}
+                {formatInt(diag.total)} produtos:
+                <ul className="ml-4 mt-1 list-disc space-y-0.5">
+                  <li>
+                    com <b>curva</b>: {formatInt(diag.com_curva)}
+                    {diag.com_curva === 0 && " ← classifique as curvas (Produtos e curvas)"}
+                  </li>
+                  <li>
+                    com <b>prazo do fornecedor</b> &gt; 0: {formatInt(diag.com_prazo_fornecedor)}
+                    {diag.com_prazo_fornecedor === 0 &&
+                      " ← falta cadastrar o prazo dos fornecedores (é isso que zera o estoque de segurança)"}
+                  </li>
+                  <li>
+                    com <b>série de vendas</b>: {formatInt(diag.com_serie_de_vendas)}
+                    {diag.com_serie_de_vendas === 0 && " ← rode o cálculo de consumo (Conexão)"}
+                  </li>
+                  <li>com estoque &gt; 0: {formatInt(diag.com_estoque)}</li>
+                </ul>
+              </div>
+            )}
+
           {resumo && (
             <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Pra promover" value={resumo.promover} tone="green" />

@@ -48,8 +48,23 @@ export async function GET() {
     sem_dado: all.filter((r) => r.status === "sem_dado").length,
     total: all.length,
   };
+  // Diagnóstico: quantos produtos têm cada insumo necessário (pra achar o que
+  // está zerado pra todo mundo quando ninguém é calculado).
+  const diagnostico = {
+    total: inputs.length,
+    com_curva: inputs.filter((p) => p.curve).length,
+    com_prazo_fornecedor: inputs.filter((p) => p.leadTimeDays > 0).length,
+    com_serie_de_vendas: inputs.filter((p) => p.monthlySeries.some((v) => v > 0)).length,
+    com_estoque: inputs.filter((p) => p.stock > 0).length,
+  };
   // Só devolve os acionáveis (em excesso) — mantém o payload enxuto.
   const rows = all.filter((r) => r.status === "promover" || r.status === "revisao");
 
-  return NextResponse.json({ config: cfg, resumo, rows, geradoEm: new Date().toISOString() });
+  return NextResponse.json({
+    config: cfg,
+    resumo,
+    diagnostico,
+    rows,
+    geradoEm: new Date().toISOString(),
+  });
 }
