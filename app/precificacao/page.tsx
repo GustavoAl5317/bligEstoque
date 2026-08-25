@@ -472,17 +472,30 @@ function MatrizEditor({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <label className="flex items-center gap-2 text-sm text-slate-600">
-          Janela de histórico (meses) p/ o desvio da demanda:
-          <input
-            type="number"
-            min={1}
-            max={24}
-            value={config.janela_meses}
-            onChange={(e) => patch((c) => (c.janela_meses = num(e.target.value)))}
-            className={cell}
-          />
-        </label>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            Janela de histórico (meses):
+            <input
+              type="number"
+              min={1}
+              max={24}
+              value={config.janela_meses}
+              onChange={(e) => patch((c) => (c.janela_meses = num(e.target.value)))}
+              className={cell}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            Prazo padrão (dias) qdo fornecedor sem prazo:
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={config.prazo_padrao_dias}
+              onChange={(e) => patch((c) => (c.prazo_padrao_dias = num(e.target.value)))}
+              className={cell}
+            />
+          </label>
+        </div>
         <div className="flex gap-2">
           <button
             onClick={onReset}

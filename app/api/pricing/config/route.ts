@@ -26,6 +26,7 @@ export async function PUT(req: NextRequest) {
   // Normaliza números básicos.
   const cfg: PricingConfig = {
     janela_meses: Math.max(1, Math.min(24, Number(body.janela_meses) || 12)),
+    prazo_padrao_dias: Math.max(1, Math.min(365, Number(body.prazo_padrao_dias) || 30)),
     z_por_curva: body.z_por_curva as Record<string, number>,
     faixas: body.faixas.map((f) => ({
       nome: String(f.nome),

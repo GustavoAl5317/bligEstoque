@@ -22,6 +22,8 @@ export interface Faixa {
 export interface PricingConfig {
   /** Meses da série usada no desvio-padrão da demanda. */
   janela_meses: number;
+  /** Prazo (dias) usado quando o fornecedor não tem prazo cadastrado. */
+  prazo_padrao_dias: number;
   /** Fator Z (nível de serviço) por curva. */
   z_por_curva: Record<string, number>;
   /** Faixas de IE + piso de margem de cada uma. */
@@ -55,6 +57,7 @@ const MATRIZ_PADRAO: Record<string, Record<string, [number, number]>> = {
 
 export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   janela_meses: 12,
+  prazo_padrao_dias: 30,
   z_por_curva: { A: 2.05, AB: 1.85, B: 1.65, BC: 1.46, C: 1.28, D: 1.1, New: 1.65 },
   faixas: FAIXAS_PADRAO,
   matriz: MATRIZ_PADRAO,
@@ -148,7 +151,9 @@ export function computePricingRow(p: PricingInput, cfg: PricingConfig): PricingR
   }
 
   const sigma = stdDev(p.monthlySeries);
-  const prazoMeses = p.leadTimeDays / 30;
+  // Prazo do fornecedor; se não cadastrado (0), usa o prazo padrão da config.
+  const leadDias = p.leadTimeDays > 0 ? p.leadTimeDays : cfg.prazo_padrao_dias || 30;
+  const prazoMeses = leadDias / 30;
   const sigmaComb = Math.sqrt(prazoMeses * sigma ** 2); // σ_prazo = 0 (sem histórico)
   const z = cfg.z_por_curva[curve];
   const estoqueSeg = z * sigmaComb;
@@ -193,7 +198,7 @@ export function computePricingRow(p: PricingInput, cfg: PricingConfig): PricingR
   base.descontoFinal = round2(descFinalFrac * 100);
   base.precoPromocional = round2(p.price * (1 - descFinalFrac));
 
-  const pct = pctLiberacao(cfg, p.leadTimeDays);
+  const pct = pctLiberacao(cfg, leadDias);
   base.qtdePromocao = Math.ceil(base.excedente * (pct / 100));
 
   base.status = excedeMargem ? "revisao" : "promover";
