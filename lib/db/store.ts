@@ -132,6 +132,11 @@ export interface SettingsStore {
   saveImportMeta(importType: string, count: number): Promise<void>;
   /** Lê a metadata de uma importação pelo tipo. */
   getImportMeta(importType: string): Promise<ImportMeta>;
+  /** Config genérica em JSON por chave (ex.: matriz de precificação). */
+  getAppConfig(key: string): Promise<unknown | null>;
+  saveAppConfig(key: string, value: unknown): Promise<void>;
+  /** Série mensal (qtd por mês) de TODOS os SKUs de uma vez: sku -> {ym: qty}. */
+  getAllMonthlySeries(): Promise<Record<string, Record<string, number>>>;
   getProductCurves(): Promise<Record<string, Curve>>;
   setProductCurve(sku: string, curve: Curve): Promise<void>;
   /** Define a mesma curva para vários produtos de uma vez. */
@@ -279,6 +284,7 @@ class MemoryStore implements SettingsStore {
   private kitComponents: KitComponent[] = [];
   private itemSales = new Map<string, number>(); // "sku|ym" -> qty
   private importMeta = new Map<string, { lastAt: string; count: number }>();
+  private appConfig = new Map<string, unknown>();
 
   async getProductCurves() {
     return Object.fromEntries(this.curves);
@@ -616,6 +622,20 @@ class MemoryStore implements SettingsStore {
     const m = this.importMeta.get(importType);
     return m ? { lastAt: m.lastAt, count: m.count } : { lastAt: null, count: 0 };
   }
+  async getAppConfig(key: string) {
+    return this.appConfig.has(key) ? (this.appConfig.get(key) as unknown) : null;
+  }
+  async saveAppConfig(key: string, value: unknown) {
+    this.appConfig.set(key, value);
+  }
+  async getAllMonthlySeries() {
+    const out: Record<string, Record<string, number>> = {};
+    for (const [k, qty] of this.itemSales) {
+      const [sku, ym] = k.split("|");
+      (out[sku] ??= {})[ym] = (out[sku][ym] ?? 0) + qty;
+    }
+    return out;
+  }
 }
 
 // ---------- Implementação Postgres (produção) ----------
@@ -771,6 +791,11 @@ async function ensureSchema(url: string): Promise<void> {
           next_page integer not null default 1,
           processed integer not null default 0,
           done boolean not null default false,
+          updated_at timestamptz not null default now()
+        )`;
+        await sql`create table if not exists app_config (
+          key text primary key,
+          value jsonb not null,
           updated_at timestamptz not null default now()
         )`;
       } finally {
@@ -1086,6 +1111,34 @@ class PostgresStore implements SettingsStore {
         count: Number(rows[0].count),
       } as ImportMeta;
     }, { lastAt: null, count: 0 } as ImportMeta);
+  }
+
+  getAppConfig(key: string) {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ value: unknown }[]>`
+        select value from app_config where key = ${key}`;
+      return rows.length > 0 ? rows[0].value : null;
+    }, null as unknown);
+  }
+
+  async saveAppConfig(key: string, value: unknown) {
+    await this.run(async (sql) => {
+      await sql`insert into app_config (key, value, updated_at)
+        values (${key}, ${sql.json(value as never)}, now())
+        on conflict (key) do update set value = ${sql.json(value as never)}, updated_at = now()`;
+    });
+  }
+
+  getAllMonthlySeries() {
+    return this.safeRead(async (sql) => {
+      const rows = await sql<{ sku: string; ym: string; qty: number }[]>`
+        select sku, ym, qty from monthly_item_sales`;
+      const out: Record<string, Record<string, number>> = {};
+      for (const r of rows) {
+        (out[r.sku] ??= {})[r.ym] = Number(r.qty);
+      }
+      return out;
+    }, {} as Record<string, Record<string, number>>);
   }
 
   getBlingToken() {

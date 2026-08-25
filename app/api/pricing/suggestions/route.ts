@@ -1,0 +1,55 @@
+import { NextResponse } from "next/server";
+import { getDataSource } from "@/lib/bling/client";
+import { getStore } from "@/lib/db/store";
+import { lastYms } from "@/lib/bling/real";
+import {
+  computePricing,
+  DEFAULT_PRICING_CONFIG,
+  type PricingConfig,
+  type PricingInput,
+} from "@/lib/calc/pricing";
+
+// Roda o motor de precificação dinâmica sobre todos os produtos e devolve os
+// que estão em EXCESSO (com desconto sugerido). Lê os parâmetros da config
+// editável — muda a matriz, muda o resultado aqui.
+export async function GET() {
+  const store = getStore();
+  const [cfgRaw, ds, series] = await Promise.all([
+    store.getAppConfig("pricing_config"),
+    getDataSource(),
+    store.getAllMonthlySeries(),
+  ]);
+  const cfg = (cfgRaw as PricingConfig | null) ?? DEFAULT_PRICING_CONFIG;
+
+  const [products, suppliers] = await Promise.all([
+    ds.listProducts(),
+    ds.listSuppliers(),
+  ]);
+  const leadBySupplier = new Map(suppliers.map((s) => [s.id, s.leadTimeDays]));
+  const yms = lastYms(cfg.janela_meses);
+
+  const inputs: PricingInput[] = products.map((p) => ({
+    sku: p.sku,
+    name: p.name,
+    curve: p.curve,
+    stock: p.stock,
+    cost: p.cost,
+    price: p.price,
+    monthlyConsumption: p.monthlyConsumption,
+    leadTimeDays: leadBySupplier.get(p.supplierId) ?? 0,
+    monthlySeries: yms.map((ym) => series[p.sku]?.[ym] ?? 0),
+  }));
+
+  const all = computePricing(inputs, cfg);
+  const resumo = {
+    promover: all.filter((r) => r.status === "promover").length,
+    revisao: all.filter((r) => r.status === "revisao").length,
+    fora: all.filter((r) => r.status === "fora").length,
+    sem_dado: all.filter((r) => r.status === "sem_dado").length,
+    total: all.length,
+  };
+  // Só devolve os acionáveis (em excesso) — mantém o payload enxuto.
+  const rows = all.filter((r) => r.status === "promover" || r.status === "revisao");
+
+  return NextResponse.json({ config: cfg, resumo, rows, geradoEm: new Date().toISOString() });
+}
