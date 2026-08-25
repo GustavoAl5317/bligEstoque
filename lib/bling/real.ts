@@ -372,8 +372,8 @@ export class BlingApiDataSource implements BlingDataSource {
     const p = achados[0];
     if (!p.situacao) return { encontrado: true, produto: p, resposta: "sem situação p/ testar" };
     // Idempotente: mesma situação atual → não altera nada no Bling.
-    const r = await this.mutate("PATCH", "/produtos/situacoes", {
-      idsProdutos: [Number(p.id)],
+    // Endpoint correto: PATCH /produtos/{id}/situacoes.
+    const r = await this.mutate("PATCH", `/produtos/${p.id}/situacoes`, {
       situacao: p.situacao,
     });
     return {
