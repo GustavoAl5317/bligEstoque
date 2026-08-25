@@ -360,6 +360,32 @@ export class BlingApiDataSource implements BlingDataSource {
     };
   }
 
+  /**
+   * Aplica um novo PREÇO ao produto no Bling (via PUT do objeto completo, só
+   * trocando o campo preco — preserva o resto). Retorna o preço anterior pra
+   * podermos reverter. NÃO mexe em estoque (mantém o objeto como veio).
+   */
+  async aplicarPreco(
+    codigo: string,
+    novoPreco: number,
+  ): Promise<{ ok: boolean; status: number; precoAnterior: number | null; resposta?: unknown }> {
+    const achados = await this.buscarProdutoPorCodigo(codigo);
+    if (achados.length === 0) return { ok: false, status: 404, precoAnterior: null };
+    const id = achados[0].id;
+    const full = await this.get<{ data?: Json }>(`/produtos/${id}`);
+    const data = (full.data ?? {}) as Json;
+    const precoAnterior =
+      typeof data.preco === "number" ? data.preco : Number(data.preco) || null;
+    data.preco = novoPreco;
+    const r = await this.mutate("PUT", `/produtos/${id}`, data);
+    return {
+      ok: r.ok,
+      status: r.status,
+      precoAnterior,
+      resposta: r.ok ? undefined : r.body,
+    };
+  }
+
   /** Requisição de ESCRITA (PATCH/PUT/POST) autenticada. Retorna status + corpo. */
   private async mutate(
     method: string,

@@ -44,6 +44,10 @@ export default function PrecificacaoPage() {
   const [query, setQuery] = useState("");
   const [statusFiltro, setStatusFiltro] = useState<"todos" | "promover" | "revisao">("todos");
   const [page, setPage] = useState(1);
+  const [aplicados, setAplicados] = useState<
+    Record<string, { precoOriginal: number; precoAplicado: number; desconto: number }>
+  >({});
+  const [busy, setBusy] = useState<string | null>(null);
 
   function loadConfig() {
     return fetch("/api/pricing/config")
@@ -62,10 +66,66 @@ export default function PrecificacaoPage() {
       .finally(() => setLoading(false));
   }
 
+  function loadAplicados() {
+    return fetch("/api/pricing/apply")
+      .then((r) => r.json())
+      .then((d) => setAplicados(d.aplicados ?? {}))
+      .catch(() => {});
+  }
+
   useEffect(() => {
     loadConfig();
     loadSuggestions();
+    loadAplicados();
   }, []);
+
+  async function aplicar(r: Row) {
+    if (
+      !confirm(
+        `Aplicar ${r.descontoFinal.toFixed(0)}% de desconto em "${r.name}"?\n\n` +
+          `O preço vai para ${formatBRL(r.precoPromocional)} no Bling (o preço original fica guardado pra reverter).`,
+      )
+    )
+      return;
+    setBusy(r.sku);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/pricing/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "apply", sku: r.sku, preco: r.precoPromocional }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      await loadAplicados();
+      setMsg(`✅ Desconto aplicado em ${r.sku} (${r.name}).`);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Falha ao aplicar.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function reverter(sku: string) {
+    if (!confirm("Reverter para o preço original no Bling?")) return;
+    setBusy(sku);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/pricing/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "restore", sku }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      await loadAplicados();
+      setMsg(`✅ Preço original restaurado em ${sku}.`);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Falha ao reverter.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -203,6 +263,7 @@ export default function PrecificacaoPage() {
                   <th className="px-3 py-3 text-right font-medium">Preço promo</th>
                   <th className="px-3 py-3 text-right font-medium">Qtd</th>
                   <th className="px-3 py-3 font-medium">Situação</th>
+                  <th className="px-3 py-3 font-medium">Ação</th>
                 </tr>
               </thead>
               <tbody>
@@ -246,6 +307,30 @@ export default function PrecificacaoPage() {
                         <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
                           Aprovar (fura margem)
                         </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {aplicados[r.sku] ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-green-700">
+                            aplicado
+                          </span>
+                          <button
+                            onClick={() => reverter(r.sku)}
+                            disabled={busy === r.sku}
+                            className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:border-slate-400 disabled:opacity-50"
+                          >
+                            {busy === r.sku ? "…" : "Reverter"}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => aplicar(r)}
+                          disabled={busy === r.sku}
+                          className="rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
+                        >
+                          {busy === r.sku ? "Aplicando…" : "Aplicar"}
+                        </button>
                       )}
                     </td>
                   </tr>

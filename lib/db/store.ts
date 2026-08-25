@@ -135,6 +135,17 @@ export interface SettingsStore {
   /** Config genérica em JSON por chave (ex.: matriz de precificação). */
   getAppConfig(key: string): Promise<unknown | null>;
   saveAppConfig(key: string, value: unknown): Promise<void>;
+  /** Estado dos descontos aplicados (preço original guardado p/ reverter). */
+  getPricingStates(): Promise<
+    Record<string, { precoOriginal: number; precoAplicado: number; desconto: number; updatedAt: string }>
+  >;
+  setPricingState(
+    sku: string,
+    precoOriginal: number,
+    precoAplicado: number,
+    desconto: number,
+  ): Promise<void>;
+  deletePricingState(sku: string): Promise<void>;
   /** Série mensal (qtd por mês) de TODOS os SKUs de uma vez: sku -> {ym: qty}. */
   getAllMonthlySeries(): Promise<Record<string, Record<string, number>>>;
   getProductCurves(): Promise<Record<string, Curve>>;
@@ -285,6 +296,10 @@ class MemoryStore implements SettingsStore {
   private itemSales = new Map<string, number>(); // "sku|ym" -> qty
   private importMeta = new Map<string, { lastAt: string; count: number }>();
   private appConfig = new Map<string, unknown>();
+  private pricingState = new Map<
+    string,
+    { precoOriginal: number; precoAplicado: number; desconto: number; updatedAt: string }
+  >();
 
   async getProductCurves() {
     return Object.fromEntries(this.curves);
@@ -636,6 +651,25 @@ class MemoryStore implements SettingsStore {
     }
     return out;
   }
+  async getPricingStates() {
+    return Object.fromEntries(this.pricingState);
+  }
+  async setPricingState(
+    sku: string,
+    precoOriginal: number,
+    precoAplicado: number,
+    desconto: number,
+  ) {
+    this.pricingState.set(sku, {
+      precoOriginal,
+      precoAplicado,
+      desconto,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  async deletePricingState(sku: string) {
+    this.pricingState.delete(sku);
+  }
 }
 
 // ---------- Implementação Postgres (produção) ----------
@@ -796,6 +830,13 @@ async function ensureSchema(url: string): Promise<void> {
         await sql`create table if not exists app_config (
           key text primary key,
           value jsonb not null,
+          updated_at timestamptz not null default now()
+        )`;
+        await sql`create table if not exists pricing_state (
+          sku text primary key,
+          preco_original numeric not null,
+          preco_aplicado numeric not null,
+          desconto numeric not null default 0,
           updated_at timestamptz not null default now()
         )`;
       } finally {
@@ -1139,6 +1180,57 @@ class PostgresStore implements SettingsStore {
       }
       return out;
     }, {} as Record<string, Record<string, number>>);
+  }
+
+  getPricingStates() {
+    return this.safeRead(
+      async (sql) => {
+        const rows = await sql<
+          {
+            sku: string;
+            preco_original: number;
+            preco_aplicado: number;
+            desconto: number;
+            updated_at: string;
+          }[]
+        >`select sku, preco_original, preco_aplicado, desconto, updated_at from pricing_state`;
+        const out: Record<
+          string,
+          { precoOriginal: number; precoAplicado: number; desconto: number; updatedAt: string }
+        > = {};
+        for (const r of rows) {
+          out[r.sku] = {
+            precoOriginal: Number(r.preco_original),
+            precoAplicado: Number(r.preco_aplicado),
+            desconto: Number(r.desconto),
+            updatedAt: new Date(r.updated_at).toISOString(),
+          };
+        }
+        return out;
+      },
+      {} as Record<
+        string,
+        { precoOriginal: number; precoAplicado: number; desconto: number; updatedAt: string }
+      >,
+    );
+  }
+
+  async setPricingState(
+    sku: string,
+    precoOriginal: number,
+    precoAplicado: number,
+    desconto: number,
+  ) {
+    await this.run(async (sql) => {
+      await sql`insert into pricing_state (sku, preco_original, preco_aplicado, desconto, updated_at)
+        values (${sku}, ${precoOriginal}, ${precoAplicado}, ${desconto}, now())
+        on conflict (sku) do update
+          set preco_aplicado = ${precoAplicado}, desconto = ${desconto}, updated_at = now()`;
+    });
+  }
+
+  async deletePricingState(sku: string) {
+    await this.run((sql) => sql`delete from pricing_state where sku = ${sku}`);
   }
 
   getBlingToken() {
