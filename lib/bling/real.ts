@@ -330,6 +330,36 @@ export class BlingApiDataSource implements BlingDataSource {
       }));
   }
 
+  /**
+   * Inspeciona o produto completo — mostra os campos de PREÇO (preco,
+   * precoPromocional…) pra montar a atualização de desconto sem sobrescrever o
+   * preço base por engano.
+   */
+  async inspecionarProduto(codigo: string): Promise<{
+    encontrado: boolean;
+    id?: string;
+    campos?: string[];
+    preco?: unknown;
+    precoCusto?: unknown;
+    precoPromocional?: unknown;
+    tem_precoPromocional?: boolean;
+  }> {
+    const achados = await this.buscarProdutoPorCodigo(codigo);
+    if (achados.length === 0) return { encontrado: false };
+    const id = achados[0].id;
+    const r = await this.get<{ data?: Json }>(`/produtos/${id}`);
+    const data = (r.data ?? {}) as Json;
+    return {
+      encontrado: true,
+      id,
+      campos: Object.keys(data),
+      preco: data.preco,
+      precoCusto: data.precoCusto,
+      precoPromocional: data.precoPromocional ?? null,
+      tem_precoPromocional: "precoPromocional" in data,
+    };
+  }
+
   /** Requisição de ESCRITA (PATCH/PUT/POST) autenticada. Retorna status + corpo. */
   private async mutate(
     method: string,
