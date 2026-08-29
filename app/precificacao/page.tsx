@@ -213,6 +213,7 @@ export default function PrecificacaoPage() {
       "sku",
       "produto",
       "curva",
+      "consumo_mensal",
       "estoque",
       "estoque_seguranca",
       "ie",
@@ -231,6 +232,7 @@ export default function PrecificacaoPage() {
           r.sku,
           r.name,
           r.curve,
+          r.monthlyConsumption,
           r.stock,
           r.estoqueSeguranca,
           r.ie ?? "",
@@ -428,6 +430,7 @@ export default function PrecificacaoPage() {
                 <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-400">
                   <th className="px-3 py-3 font-medium">Produto</th>
                   <th className="px-3 py-3 text-center font-medium">Curva</th>
+                  <th className="px-3 py-3 text-right font-medium">CM/mês</th>
                   <th className="px-3 py-3 text-right font-medium">Estoque</th>
                   <th className="px-3 py-3 text-right font-medium">Seg.</th>
                   <th className="px-3 py-3 text-right font-medium">IE</th>
@@ -453,6 +456,9 @@ export default function PrecificacaoPage() {
                       <div className="text-xs text-slate-400">{r.sku}</div>
                     </td>
                     <td className="px-3 py-2.5 text-center text-slate-600">{r.curve}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">
+                      {r.monthlyConsumption > 0 ? r.monthlyConsumption.toFixed(1) : "—"}
+                    </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">
                       {formatInt(r.stock)}
                     </td>
@@ -532,7 +538,7 @@ export default function PrecificacaoPage() {
                   </tr>
                   {aberto === r.sku && r.plano.length > 0 && (
                     <tr className="bg-slate-50/70">
-                      <td colSpan={11} className="px-4 py-3">
+                      <td colSpan={12} className="px-4 py-3">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                           Plano escalonado — desça o desconto conforme o estoque baixa
                         </div>
@@ -609,16 +615,18 @@ export default function PrecificacaoPage() {
         </>
       ) : (
         config && (
-          <div className="space-y-8">
-            <MatrizEditor
-              config={config}
-              patch={patch}
-              onSave={saveConfig}
-              onReset={resetConfig}
-              saving={saving}
-            />
+          <div className="lg:grid lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start lg:gap-6">
+            <div className="order-2 min-w-0">
+              <MatrizEditor
+                config={config}
+                patch={patch}
+                onSave={saveConfig}
+                onReset={resetConfig}
+                saving={saving}
+              />
+            </div>
 
-            <section>
+            <section className="order-1 mb-8 lg:mb-0">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold text-slate-700">
                   Prazo de entrega por fornecedor (dias)
