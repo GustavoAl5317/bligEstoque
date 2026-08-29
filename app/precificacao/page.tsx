@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { formatBRL, formatInt } from "@/lib/format";
 import { CURVES } from "@/lib/bling/types";
 import type { PricingConfig } from "@/lib/calc/pricing";
@@ -22,6 +22,7 @@ interface Row {
   excedente: number;
   qtdePromocao: number;
   status: "promover" | "revisao" | "fora" | "sem_dado";
+  plano: { faixa: string; unidades: number; descontoPct: number; precoPromo: number }[];
 }
 interface Resumo {
   promover: number;
@@ -65,6 +66,7 @@ export default function PrecificacaoPage() {
     Record<string, { precoOriginal: number; precoAplicado: number; desconto: number }>
   >({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [aberto, setAberto] = useState<string | null>(null);
 
   function loadConfig() {
     return fetch("/api/pricing/config")
@@ -179,6 +181,7 @@ export default function PrecificacaoPage() {
       "desconto_pct",
       "preco_promocional",
       "qtd_a_promover",
+      "plano_escalonado",
     ];
     const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
     const lines = [head.join(";")];
@@ -196,6 +199,7 @@ export default function PrecificacaoPage() {
           r.descontoFinal,
           r.precoPromocional,
           r.qtdePromocao,
+          r.plano.map((b) => `${b.unidades} un a ${b.descontoPct.toFixed(0)}%`).join(" | "),
         ]
           .map(esc)
           .join(";"),
@@ -397,7 +401,13 @@ export default function PrecificacaoPage() {
               </thead>
               <tbody>
                 {pageRows.map((r) => (
-                  <tr key={r.sku} className="border-b border-slate-50 hover:bg-slate-50">
+                  <Fragment key={r.sku}>
+                  <tr
+                    onClick={() =>
+                      setAberto(aberto === r.sku ? null : r.plano.length ? r.sku : null)
+                    }
+                    className={`border-b border-slate-50 hover:bg-slate-50 ${r.plano.length ? "cursor-pointer" : ""}`}
+                  >
                     <td className="px-3 py-2.5">
                       <div className="font-medium text-slate-800">{r.name}</div>
                       <div className="text-xs text-slate-400">{r.sku}</div>
@@ -426,6 +436,11 @@ export default function PrecificacaoPage() {
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">
                       {formatInt(r.qtdePromocao)}
+                      {r.plano.length > 1 && (
+                        <span className="ml-1 text-xs text-brand">
+                          {aberto === r.sku ? "▲" : "▾ plano"}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5">
                       {r.status === "promover" ? (
@@ -451,7 +466,10 @@ export default function PrecificacaoPage() {
                             aplicado
                           </span>
                           <button
-                            onClick={() => reverter(r.sku)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              reverter(r.sku);
+                            }}
                             disabled={busy === r.sku}
                             className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:border-slate-400 disabled:opacity-50"
                           >
@@ -460,7 +478,10 @@ export default function PrecificacaoPage() {
                         </div>
                       ) : (
                         <button
-                          onClick={() => aplicar(r)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            aplicar(r);
+                          }}
                           disabled={busy === r.sku}
                           className="rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                         >
@@ -469,6 +490,37 @@ export default function PrecificacaoPage() {
                       )}
                     </td>
                   </tr>
+                  {aberto === r.sku && r.plano.length > 0 && (
+                    <tr className="bg-slate-50/70">
+                      <td colSpan={11} className="px-4 py-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          Plano escalonado — desça o desconto conforme o estoque baixa
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {r.plano.map((b, i) => (
+                            <div
+                              key={i}
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                            >
+                              <div className="font-semibold tabular-nums text-slate-800">
+                                {formatInt(b.unidades)} un a {b.descontoPct.toFixed(0)}%
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {b.faixa} · {formatBRL(b.precoPromo)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-xs text-slate-400">
+                          Comece pelo maior desconto ({r.plano[0]?.descontoPct.toFixed(0)}%);
+                          quando vender essas {formatInt(r.plano[0]?.unidades ?? 0)} unidades, o
+                          desconto cai pro próximo nível — e assim por diante até voltar ao
+                          preço normal.
+                        </p>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

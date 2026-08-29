@@ -103,6 +103,28 @@ export interface PricingRow {
   excedente: number; // unidades acima da segurança
   qtdePromocao: number; // excedente liberado pelo prazo
   status: PricingStatus;
+  /** Plano escalonado: quantas unidades vender em cada faixa (o desconto cai
+   *  conforme o estoque baixa e o produto sai do Extremo pro Crítico, etc.). */
+  plano: { faixa: string; unidades: number; descontoPct: number; precoPromo: number }[];
+}
+
+/** Desconto % interpolado dentro de uma faixa para um IE. */
+function descNaFaixa(
+  cfg: PricingConfig,
+  curve: string,
+  faixa: Faixa,
+  ie: number,
+): number {
+  const range = cfg.matriz[curve]?.[faixa.nome] ?? [0, 0];
+  const ieClamped = Math.min(ie, faixa.ie_max);
+  const span = faixa.ie_max - faixa.ie_min;
+  const frac = span > 0 ? (ieClamped - faixa.ie_min) / span : 0;
+  return range[0] + frac * (range[1] - range[0]);
+}
+
+/** Teto de desconto (fração) que não fura o piso de margem da faixa. */
+function tetoMargem(margem: number, piso: number): number {
+  return piso < 1 ? Math.max(0, 1 - (1 - margem) / (1 - piso)) : 0;
 }
 
 // Desvio-padrão amostral.
@@ -143,6 +165,7 @@ export function computePricingRow(p: PricingInput, cfg: PricingConfig): PricingR
     excedente: 0,
     qtdePromocao: 0,
     status: "fora",
+    plano: [],
   };
 
   // Sem curva ou sem demanda medível → não dá pra classificar excesso.
@@ -178,17 +201,12 @@ export function computePricingRow(p: PricingInput, cfg: PricingConfig): PricingR
   if (!faixa) return { ...base, status: "fora" };
   base.faixa = faixa.nome;
 
-  // Interpolação dentro da faixa (evita saltos).
-  const range = cfg.matriz[curve]?.[faixa.nome] ?? [0, 0];
-  const ieClamped = Math.min(ie, faixa.ie_max);
-  const span = faixa.ie_max - faixa.ie_min;
-  const frac = span > 0 ? (ieClamped - faixa.ie_min) / span : 0;
-  const descSugerido = range[0] + frac * (range[1] - range[0]); // %
+  // Desconto sugerido no IE atual (interpolado).
+  const descSugerido = descNaFaixa(cfg, curve, faixa, ie); // %
 
   // Teto pela margem: nunca furar o piso da faixa.
   const margem = p.price > 0 ? (p.price - p.cost) / p.price : 0;
-  const piso = faixa.piso_margem;
-  const descMax = piso < 1 ? Math.max(0, 1 - (1 - margem) / (1 - piso)) : 0; // fração
+  const descMax = tetoMargem(margem, faixa.piso_margem); // fração
 
   const descFinalFrac = Math.min(descSugerido / 100, descMax);
   const excedeMargem = descSugerido / 100 > descMax + 1e-9;
@@ -199,7 +217,29 @@ export function computePricingRow(p: PricingInput, cfg: PricingConfig): PricingR
   base.precoPromocional = round2(p.price * (1 - descFinalFrac));
 
   const pct = pctLiberacao(cfg, leadDias);
-  base.qtdePromocao = Math.ceil(base.excedente * (pct / 100));
+
+  // Plano ESCALONADO: distribui o excedente pelas faixas que o estoque atravessa
+  // ao ser vendido. Cada faixa tem seu próprio desconto (menor conforme o estoque
+  // baixa) e respeita o piso de margem daquela faixa.
+  const faixasDesc = [...faixas].sort((a, b) => b.ie_min - a.ie_min);
+  for (const f of faixasDesc) {
+    const ieHigh = Math.min(ie, f.ie_max);
+    const ieLow = Math.max(1, f.ie_min);
+    if (ieHigh <= ieLow) continue;
+    const unidades = Math.round((ieHigh - ieLow) * estoqueSeg * (pct / 100));
+    if (unidades <= 0) continue;
+    const dRaw = descNaFaixa(cfg, curve, f, ieHigh);
+    const dMax = tetoMargem(margem, f.piso_margem) * 100;
+    const d = Math.min(dRaw, dMax);
+    base.plano.push({
+      faixa: f.nome,
+      unidades,
+      descontoPct: round2(d),
+      precoPromo: round2(p.price * (1 - d / 100)),
+    });
+  }
+  // Quantidade total a promover = soma do plano (bate com a régua escalonada).
+  base.qtdePromocao = base.plano.reduce((a, x) => a + x.unidades, 0);
 
   base.status = excedeMargem ? "revisao" : "promover";
   return base;
