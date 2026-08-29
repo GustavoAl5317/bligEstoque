@@ -67,6 +67,12 @@ export default function PrecificacaoPage() {
   >({});
   const [busy, setBusy] = useState<string | null>(null);
   const [aberto, setAberto] = useState<string | null>(null);
+  const [fornecedores, setFornecedores] = useState<
+    { id: string; name: string; leadTimeDays: number; produtos: number }[]
+  >([]);
+  const [fornPending, setFornPending] = useState<Record<string, number>>({});
+  const [fornSaving, setFornSaving] = useState(false);
+  const [fornQuery, setFornQuery] = useState("");
 
   function loadConfig() {
     return fetch("/api/pricing/config")
@@ -93,11 +99,45 @@ export default function PrecificacaoPage() {
       .catch(() => {});
   }
 
+  function loadFornecedores() {
+    return fetch("/api/suppliers")
+      .then((r) => r.json())
+      .then((d) => setFornecedores(d.fornecedores ?? []))
+      .catch(() => {});
+  }
+
   useEffect(() => {
     loadConfig();
     loadSuggestions();
     loadAplicados();
+    loadFornecedores();
   }, []);
+
+  async function salvarPrazos() {
+    const changes = Object.entries(fornPending).map(([id, days]) => ({ id, days }));
+    if (changes.length === 0) return;
+    setFornSaving(true);
+    setMsg(null);
+    try {
+      const r = await fetch("/api/suppliers", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ changes }),
+      });
+      if (!r.ok) throw new Error("Falha ao salvar prazos.");
+      setFornecedores((prev) =>
+        prev.map((f) => (f.id in fornPending ? { ...f, leadTimeDays: fornPending[f.id] } : f)),
+      );
+      setFornPending({});
+      setMsg("Prazos salvos. Recalculando…");
+      await loadSuggestions();
+      setMsg("Prazos salvos e sugestões atualizadas. ✅");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Falha ao salvar prazos.");
+    } finally {
+      setFornSaving(false);
+    }
+  }
 
   async function aplicar(r: Row) {
     if (
@@ -569,13 +609,100 @@ export default function PrecificacaoPage() {
         </>
       ) : (
         config && (
-          <MatrizEditor
-            config={config}
-            patch={patch}
-            onSave={saveConfig}
-            onReset={resetConfig}
-            saving={saving}
-          />
+          <div className="space-y-8">
+            <MatrizEditor
+              config={config}
+              patch={patch}
+              onSave={saveConfig}
+              onReset={resetConfig}
+              saving={saving}
+            />
+
+            <section>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-slate-700">
+                  Prazo de entrega por fornecedor (dias)
+                </h2>
+                {Object.keys(fornPending).length > 0 && (
+                  <button
+                    onClick={salvarPrazos}
+                    disabled={fornSaving}
+                    className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
+                  >
+                    {fornSaving
+                      ? "Salvando…"
+                      : `Salvar ${Object.keys(fornPending).length} prazo(s)`}
+                  </button>
+                )}
+              </div>
+              <p className="mb-2 text-xs text-slate-500">
+                Quem ficar em <b>0</b> usa o <b>prazo padrão</b> ({config.prazo_padrao_dias}{" "}
+                dias) definido acima. Salvou, o cálculo se atualiza na hora.
+              </p>
+              <input
+                type="search"
+                placeholder="Buscar fornecedor…"
+                value={fornQuery}
+                onChange={(e) => setFornQuery(e.target.value)}
+                className="mb-2 w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+              <div className="max-h-96 overflow-auto rounded-xl border border-slate-200 bg-white">
+                <table className="w-full min-w-[420px] text-sm">
+                  <thead className="sticky top-0 bg-slate-50">
+                    <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
+                      <th className="px-3 py-2 font-medium">Fornecedor</th>
+                      <th className="px-3 py-2 text-right font-medium">Produtos</th>
+                      <th className="px-3 py-2 text-right font-medium">Prazo (dias)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fornecedores
+                      .filter(
+                        (f) =>
+                          fornQuery.trim() === "" ||
+                          f.name.toLowerCase().includes(fornQuery.trim().toLowerCase()),
+                      )
+                      .map((f) => {
+                        const val = fornPending[f.id] ?? f.leadTimeDays;
+                        return (
+                          <tr
+                            key={f.id}
+                            className={`border-t border-slate-50 ${f.id in fornPending ? "bg-brand-tint/40" : ""}`}
+                          >
+                            <td className="px-3 py-2 text-slate-700">{f.name}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-400">
+                              {formatInt(f.produtos)}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                max={365}
+                                value={val || ""}
+                                placeholder="0"
+                                onChange={(e) =>
+                                  setFornPending((p) => ({
+                                    ...p,
+                                    [f.id]: Math.max(0, Number(e.target.value) || 0),
+                                  }))
+                                }
+                                className={`w-20 rounded border px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-brand ${
+                                  val > 0 ? "border-slate-200" : "border-amber-300 bg-amber-50"
+                                }`}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs text-slate-400">
+                Prefere em massa? Dá pra importar por planilha na tela{" "}
+                <b>Prazos dos fornecedores</b> (menu lateral).
+              </p>
+            </section>
+          </div>
         )
       )}
     </div>
