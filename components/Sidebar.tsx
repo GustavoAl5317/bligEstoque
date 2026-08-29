@@ -78,19 +78,6 @@ const links = [
     ),
   },
   {
-    href: "/fornecedores",
-    label: "Prazos dos fornecedores",
-    desc: "Prazo de entrega",
-    icon: (
-      <path
-        d="M3 13V6a1 1 0 011-1h9v8M13 8h4l4 4v1h-8M3 13h18v3H3zM7 18a2 2 0 104 0 2 2 0 00-4 0zM15 18a2 2 0 104 0 2 2 0 00-4 0z"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    ),
-  },
-  {
     href: "/producao",
     label: "Em produção",
     desc: "Somar ao estoque",

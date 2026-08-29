@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { formatBRL, formatInt } from "@/lib/format";
 import { CURVES } from "@/lib/bling/types";
 import type { PricingConfig } from "@/lib/calc/pricing";
@@ -43,7 +43,7 @@ const STATUS_LABEL: Record<Row["status"], string> = {
 const PAGE_SIZE = 100;
 
 export default function PrecificacaoPage() {
-  const [tab, setTab] = useState<"sugestoes" | "matriz">("sugestoes");
+  const [tab, setTab] = useState<"sugestoes" | "matriz" | "prazos">("sugestoes");
   const [config, setConfig] = useState<PricingConfig | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [resumo, setResumo] = useState<Resumo | null>(null);
@@ -73,6 +73,8 @@ export default function PrecificacaoPage() {
   const [fornPending, setFornPending] = useState<Record<string, number>>({});
   const [fornSaving, setFornSaving] = useState(false);
   const [fornQuery, setFornQuery] = useState("");
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   function loadConfig() {
     return fetch("/api/pricing/config")
@@ -104,6 +106,28 @@ export default function PrecificacaoPage() {
       .then((r) => r.json())
       .then((d) => setFornecedores(d.fornecedores ?? []))
       .catch(() => {});
+  }
+
+  async function importPrazos(file: File) {
+    setImporting(true);
+    setMsg("Lendo a planilha…");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/suppliers/import", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Falha ao importar.");
+      let m = `Importado: ${d.aplicados} fornecedor(es).`;
+      if (d.total_nao_encontrados > 0) m += ` ${d.total_nao_encontrados} não bateram.`;
+      setMsg(m);
+      await loadFornecedores();
+      await loadSuggestions();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Falha ao importar.");
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   }
 
   useEffect(() => {
@@ -209,44 +233,54 @@ export default function PrecificacaoPage() {
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   function exportCsv() {
+    // Faixas em colunas próprias (do mais crítico pro menos): cada faixa vira
+    // 3 colunas — unidades, desconto % e preço — pra trabalhar na planilha.
+    const faixas = [...(config?.faixas ?? [])].map((f) => f.nome).reverse();
+    const q = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
+    // Número no padrão brasileiro (vírgula decimal), sem aspas, pro Excel ler.
+    const n = (v: number | null | undefined) =>
+      v == null || Number.isNaN(v) ? "" : String(v).replace(".", ",");
+
     const head = [
-      "sku",
-      "produto",
-      "curva",
-      "consumo_mensal",
-      "estoque",
-      "estoque_seguranca",
-      "ie",
-      "faixa",
-      "situacao",
-      "desconto_pct",
-      "preco_promocional",
-      "qtd_a_promover",
-      "plano_escalonado",
+      "SKU",
+      "Produto",
+      "Curva",
+      "Consumo mensal",
+      "Estoque",
+      "Estoque seguranca",
+      "IE",
+      "Faixa atual",
+      "Situacao",
+      "Desconto %",
+      "Preco promocional",
+      "Qtd total a promover",
+      ...faixas.flatMap((f) => [`${f} - un`, `${f} - desc %`, `${f} - preco`]),
     ];
-    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
-    const lines = [head.join(";")];
+    const lines = [head.map(q).join(";")];
+
     for (const r of filtered) {
-      lines.push(
-        [
-          r.sku,
-          r.name,
-          r.curve,
-          r.monthlyConsumption,
-          r.stock,
-          r.estoqueSeguranca,
-          r.ie ?? "",
-          r.faixa,
-          STATUS_LABEL[r.status],
-          r.descontoFinal,
-          r.precoPromocional,
-          r.qtdePromocao,
-          r.plano.map((b) => `${b.unidades} un a ${b.descontoPct.toFixed(0)}%`).join(" | "),
-        ]
-          .map(esc)
-          .join(";"),
-      );
+      const byFaixa = new Map(r.plano.map((b) => [b.faixa, b]));
+      const cells: string[] = [
+        q(r.sku),
+        q(r.name),
+        q(r.curve),
+        n(r.monthlyConsumption),
+        n(r.stock),
+        n(r.estoqueSeguranca),
+        n(r.ie),
+        q(r.faixa),
+        q(STATUS_LABEL[r.status]),
+        n(r.descontoFinal),
+        n(r.precoPromocional),
+        n(r.qtdePromocao),
+      ];
+      for (const f of faixas) {
+        const b = byFaixa.get(f);
+        cells.push(n(b?.unidades ?? null), n(b?.descontoPct ?? null), n(b?.precoPromo ?? null));
+      }
+      lines.push(cells.join(";"));
     }
+
     const blob = new Blob(["﻿" + lines.join("\n")], {
       type: "text/csv;charset=utf-8;",
     });
@@ -314,7 +348,7 @@ export default function PrecificacaoPage() {
       </header>
 
       <div className="mb-4 flex gap-2 border-b border-slate-200">
-        {(["sugestoes", "matriz"] as const).map((t) => (
+        {(["sugestoes", "matriz", "prazos"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -324,7 +358,11 @@ export default function PrecificacaoPage() {
                 : "border-transparent text-slate-500 hover:text-slate-700"
             }`}
           >
-            {t === "sugestoes" ? "Sugestões de desconto" : "Matriz (configuração)"}
+            {t === "sugestoes"
+              ? "Sugestões de desconto"
+              : t === "matriz"
+                ? "Matriz (configuração)"
+                : "Prazos dos fornecedores"}
           </button>
         ))}
       </div>
@@ -613,48 +651,68 @@ export default function PrecificacaoPage() {
             margem permite — ficam pra decisão manual.
           </p>
         </>
+      ) : tab === "matriz" ? (
+        config && (
+          <MatrizEditor
+            config={config}
+            patch={patch}
+            onSave={saveConfig}
+            onReset={resetConfig}
+            saving={saving}
+          />
+        )
       ) : (
         config && (
-          <div className="lg:grid lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start lg:gap-6">
-            <div className="order-2 min-w-0">
-              <MatrizEditor
-                config={config}
-                patch={patch}
-                onSave={saveConfig}
-                onReset={resetConfig}
-                saving={saving}
-              />
-            </div>
-
-            <section className="order-1 mb-8 lg:mb-0">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold text-slate-700">
-                  Prazo de entrega por fornecedor (dias)
-                </h2>
+          <section className="mx-auto max-w-2xl">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-700">
+                Prazo de entrega por fornecedor (dias)
+              </h2>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) importPrazos(f);
+                  }}
+                />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={importing}
+                  className="rounded-lg border border-brand px-3 py-1.5 text-sm font-medium text-brand hover:bg-brand-tint disabled:opacity-50"
+                >
+                  {importing ? "Importando…" : "Importar planilha"}
+                </button>
                 {Object.keys(fornPending).length > 0 && (
                   <button
                     onClick={salvarPrazos}
                     disabled={fornSaving}
                     className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                   >
-                    {fornSaving
-                      ? "Salvando…"
-                      : `Salvar ${Object.keys(fornPending).length} prazo(s)`}
+                    {fornSaving ? "Salvando…" : `Salvar ${Object.keys(fornPending).length}`}
                   </button>
                 )}
               </div>
-              <p className="mb-2 text-xs text-slate-500">
-                Quem ficar em <b>0</b> usa o <b>prazo padrão</b> ({config.prazo_padrao_dias}{" "}
-                dias) definido acima. Salvou, o cálculo se atualiza na hora.
-              </p>
-              <input
-                type="search"
-                placeholder="Buscar fornecedor…"
-                value={fornQuery}
-                onChange={(e) => setFornQuery(e.target.value)}
-                className="mb-2 w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand"
-              />
-              <div className="max-h-96 overflow-auto rounded-xl border border-slate-200 bg-white">
+            </div>
+            <p className="mb-2 text-xs text-slate-500">
+              Quem ficar em <b>0</b> usa o <b>prazo padrão</b> ({config.prazo_padrao_dias}{" "}
+              dias) da aba Matriz. Planilha: colunas <b>Fornecedor</b> e <b>Prazo</b>.{" "}
+              <a href="/modelo-prazos.xlsx" download className="text-brand hover:underline">
+                Baixar modelo
+              </a>
+              .
+            </p>
+            <input
+              type="search"
+              placeholder="Buscar fornecedor…"
+              value={fornQuery}
+              onChange={(e) => setFornQuery(e.target.value)}
+              className="mb-2 w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand"
+            />
+            <div className="max-h-[60vh] overflow-auto rounded-xl border border-slate-200 bg-white">
                 <table className="w-full min-w-[420px] text-sm">
                   <thead className="sticky top-0 bg-slate-50">
                     <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
@@ -705,12 +763,7 @@ export default function PrecificacaoPage() {
                   </tbody>
                 </table>
               </div>
-              <p className="mt-2 text-xs text-slate-400">
-                Prefere em massa? Dá pra importar por planilha na tela{" "}
-                <b>Prazos dos fornecedores</b> (menu lateral).
-              </p>
-            </section>
-          </div>
+          </section>
         )
       )}
     </div>
