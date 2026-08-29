@@ -41,12 +41,21 @@ export async function GET() {
   }));
 
   const all = computePricing(inputs, cfg);
+  // Contagem por faixa (só dos que entram em promoção: IE > 1).
+  const por_faixa: Record<string, number> = {};
+  for (const f of cfg.faixas) por_faixa[f.nome] = 0;
+  for (const r of all) {
+    if ((r.status === "promover" || r.status === "revisao") && por_faixa[r.faixa] != null) {
+      por_faixa[r.faixa]++;
+    }
+  }
   const resumo = {
     promover: all.filter((r) => r.status === "promover").length,
     revisao: all.filter((r) => r.status === "revisao").length,
     fora: all.filter((r) => r.status === "fora").length,
     sem_dado: all.filter((r) => r.status === "sem_dado").length,
     total: all.length,
+    por_faixa,
   };
   // Diagnóstico: quantos produtos têm cada insumo necessário (pra achar o que
   // está zerado pra todo mundo quando ninguém é calculado).
@@ -57,14 +66,13 @@ export async function GET() {
     com_serie_de_vendas: inputs.filter((p) => p.monthlySeries.some((v) => v > 0)).length,
     com_estoque: inputs.filter((p) => p.stock > 0).length,
   };
-  // Só devolve os acionáveis (em excesso) — mantém o payload enxuto.
-  const rows = all.filter((r) => r.status === "promover" || r.status === "revisao");
-
+  // Devolve TODOS os produtos (com status) — a cliente quer exportar tudo, e os
+  // que não entram em promoção aparecem como "Não promover".
   return NextResponse.json({
     config: cfg,
     resumo,
     diagnostico,
-    rows,
+    rows: all,
     geradoEm: new Date().toISOString(),
   });
 }

@@ -29,7 +29,15 @@ interface Resumo {
   fora: number;
   sem_dado: number;
   total: number;
+  por_faixa: Record<string, number>;
 }
+
+const STATUS_LABEL: Record<Row["status"], string> = {
+  promover: "Promover",
+  revisao: "Aprovar (fura margem)",
+  fora: "Não promover",
+  sem_dado: "Sem giro/dado",
+};
 
 const PAGE_SIZE = 100;
 
@@ -49,7 +57,9 @@ export default function PrecificacaoPage() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [statusFiltro, setStatusFiltro] = useState<"todos" | "promover" | "revisao">("todos");
+  const [statusFiltro, setStatusFiltro] = useState<
+    "excesso" | "promover" | "revisao" | "nao_promover" | "todos"
+  >("excesso");
   const [page, setPage] = useState(1);
   const [aplicados, setAplicados] = useState<
     Record<string, { precoOriginal: number; precoAplicado: number; desconto: number }>
@@ -135,18 +145,72 @@ export default function PrecificacaoPage() {
     }
   }
 
+  function matchStatus(r: Row) {
+    if (statusFiltro === "todos") return true;
+    if (statusFiltro === "excesso") return r.status === "promover" || r.status === "revisao";
+    if (statusFiltro === "nao_promover") return r.status === "fora" || r.status === "sem_dado";
+    return r.status === statusFiltro;
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter(
       (r) =>
-        (statusFiltro === "todos" || r.status === statusFiltro) &&
+        matchStatus(r) &&
         (q === "" || r.name.toLowerCase().includes(q) || r.sku.toLowerCase().includes(q)),
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, query, statusFiltro]);
 
   useEffect(() => setPage(1), [query, statusFiltro]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  function exportCsv() {
+    const head = [
+      "sku",
+      "produto",
+      "curva",
+      "estoque",
+      "estoque_seguranca",
+      "ie",
+      "faixa",
+      "situacao",
+      "desconto_pct",
+      "preco_promocional",
+      "qtd_a_promover",
+    ];
+    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+    const lines = [head.join(";")];
+    for (const r of filtered) {
+      lines.push(
+        [
+          r.sku,
+          r.name,
+          r.curve,
+          r.stock,
+          r.estoqueSeguranca,
+          r.ie ?? "",
+          r.faixa,
+          STATUS_LABEL[r.status],
+          r.descontoFinal,
+          r.precoPromocional,
+          r.qtdePromocao,
+        ]
+          .map(esc)
+          .join(";"),
+      );
+    }
+    const blob = new Blob(["﻿" + lines.join("\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "precificacao.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   // ---- edição da config ----
   function patch(fn: (c: PricingConfig) => void) {
@@ -254,8 +318,29 @@ export default function PrecificacaoPage() {
             <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Pra promover" value={resumo.promover} tone="green" />
               <Stat label="Precisam aprovação" value={resumo.revisao} tone="amber" />
-              <Stat label="No nível certo" value={resumo.fora} />
+              <Stat label="Não promover" value={resumo.fora} />
               <Stat label="Sem dado/giro" value={resumo.sem_dado} />
+            </div>
+          )}
+
+          {resumo && resumo.promover + resumo.revisao > 0 && (
+            <div className="mb-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Produtos em excesso por faixa (do menos pro mais crítico)
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(config?.faixas ?? []).map((f) => (
+                  <div
+                    key={f.nome}
+                    className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-sm"
+                  >
+                    <span className="text-slate-500">{f.nome}:</span>{" "}
+                    <b className="tabular-nums text-slate-800">
+                      {formatInt(resumo.por_faixa?.[f.nome] ?? 0)}
+                    </b>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -265,17 +350,26 @@ export default function PrecificacaoPage() {
               placeholder="Buscar produto ou SKU…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="min-w-[220px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand sm:max-w-xs"
+              className="min-w-[200px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand sm:max-w-xs"
             />
             <select
               value={statusFiltro}
               onChange={(e) => setStatusFiltro(e.target.value as typeof statusFiltro)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand"
             >
-              <option value="todos">Todos em excesso</option>
+              <option value="excesso">Em excesso (promover)</option>
               <option value="promover">Só pra promover</option>
-              <option value="revisao">Só que precisam aprovação</option>
+              <option value="revisao">Só precisam aprovação</option>
+              <option value="nao_promover">Só "Não promover"</option>
+              <option value="todos">Todos os produtos</option>
             </select>
+            <button
+              onClick={exportCsv}
+              disabled={filtered.length === 0}
+              className="rounded-lg border border-brand px-3 py-2 text-sm font-medium text-brand hover:bg-brand-tint disabled:opacity-50"
+            >
+              Exportar CSV
+            </button>
             <button
               onClick={loadSuggestions}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:border-slate-400"
@@ -338,14 +432,20 @@ export default function PrecificacaoPage() {
                         <span className="rounded-md bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
                           Promover
                         </span>
-                      ) : (
+                      ) : r.status === "revisao" ? (
                         <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
                           Aprovar (fura margem)
+                        </span>
+                      ) : (
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                          {STATUS_LABEL[r.status]}
                         </span>
                       )}
                     </td>
                     <td className="px-3 py-2.5">
-                      {aplicados[r.sku] ? (
+                      {r.status !== "promover" && r.status !== "revisao" ? (
+                        <span className="text-xs text-slate-300">—</span>
+                      ) : aplicados[r.sku] ? (
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium text-green-700">
                             aplicado
