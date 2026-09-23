@@ -15,7 +15,7 @@ import type { BlingDataSource, Product, Supplier } from "./types";
 import { getValidAccessToken } from "./token-manager";
 import { getStore, type CachedProduct } from "@/lib/db/store";
 
-const BASE_URL = "https://www.bling.com.br/Api/v3";
+const BASE_URL = "https://api.bling.com.br/Api/v3";
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 100; // trava de segurança (até 10.000 produtos)
 // Pedaços que buscam DETALHE por item precisam ser menores para caber nos 60s

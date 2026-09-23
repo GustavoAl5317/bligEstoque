@@ -8,7 +8,7 @@
 // BLING_REDIRECT_URI (ou o callback derivado da origem da requisição).
 
 const AUTHORIZE_URL = "https://www.bling.com.br/Api/v3/oauth/authorize";
-const TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token";
+const TOKEN_URL = "https://api.bling.com.br/Api/v3/oauth/token";
 
 export interface OAuthTokenResponse {
   access_token: string;
