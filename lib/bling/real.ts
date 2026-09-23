@@ -81,7 +81,13 @@ export class BlingApiDataSource implements BlingDataSource {
       return this.get<T>(path, attempt + 1);
     }
     if (!res.ok) {
-      throw new Error(`Bling API ${path} respondeu ${res.status}`);
+      let detalhe = "";
+      try {
+        detalhe = (await res.text()).slice(0, 300);
+      } catch {
+        /* sem corpo */
+      }
+      throw new Error(`Bling API ${path} respondeu ${res.status} — ${detalhe}`);
     }
     return (await res.json()) as T;
   }
