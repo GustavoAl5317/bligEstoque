@@ -6,8 +6,12 @@ import { getStore } from "@/lib/db/store";
 export const maxDuration = 60;
 
 export async function GET() {
-  const job = await getStore().getProductJob();
-  return NextResponse.json({ job });
+  const store = getStore();
+  const [job, ultimoErro] = await Promise.all([
+    store.getProductJob(),
+    store.getAppConfig("sync_last_error"),
+  ]);
+  return NextResponse.json({ job, ultimo_erro: ultimoErro ?? null });
 }
 
 export async function POST(req: Request) {
@@ -27,9 +31,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, ...r });
   } catch (e) {
     console.error("Sync falhou:", e);
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Falha na sincronização." },
-      { status: 500 },
-    );
+    const msg = e instanceof Error ? e.message : "Falha na sincronização.";
+    await getStore()
+      .saveAppConfig("sync_last_error", { msg, at: new Date().toISOString() })
+      .catch(() => {});
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
